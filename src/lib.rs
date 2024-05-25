@@ -1,27 +1,27 @@
 //! A library for working with non-empty collections i.e. populated collections.
 //! Mirrors std collections in its populated versions that guarantee always containing at least one
 //! element in the collection.
-//! 
-//! These collections are useful when you want to ensure that a collection is never empty. Any attempt 
+//!
+//! These collections are useful when you want to ensure that a collection is never empty. Any attempt
 //! to make it empty will result in a compile-time error. Also, these collections provide additional
 //! guarantees about their length and capacity, which are always non-zero. This means that you do not
 //! need to deal with `Option` in cases where you know that the collection will always have at least
 //! one element. For example, you call `first()` on a `PopulatedVec` and you are guaranteed to get a
 //! reference to the first element without having to deal with `Option`.
-//! 
+//!
 //! # Safe transition to `std` collections when emptying a populated collection
-//! 
+//!
 //! If you invoke an operation that empties a populated collection, the library provides a safe way to
 //! transition to the corresponding `std` collection. For example, if you call `clear()` on a
 //! `PopulatedVec`, it will return the underlying `Vec`. `clear()` on a `PopulatedVec` will take
 //! ownership of the `PopulatedVec` and return the underlying `Vec`. This way any attempt to use
 //! a cleared `PopulatedVec` will result in a compile-time error. At the same time, you can safely
 //! and efficiently transition to the `Vec` when you need to.
-//! 
+//!
 //! # Collections
-//! 
+//!
 //! The following `std` collections have been mirrored in this library:
-//! 
+//!
 //! - `Vec` → `PopulatedVec`
 //! - `Slice` → `PopulatedSlice`
 //! - `BinaryHeap` → `PopulatedBinaryHeap`
@@ -30,37 +30,36 @@
 //! - `BTreeMap` → `PopulatedBTreeMap`
 //! - `BTreeSet` → `PopulatedBTreeSet`
 //! - `VecDeque` → `PopulatedVecDeque`
-//! 
+//!
 //! # Examples
-//! 
+//!
 //! `first()` on a `PopulatedVec` and `PopulatedSlice`:
-//! 
+//!
 //! ```
 //! use populated::{PopulatedVec, PopulatedSlice};
-//! 
+//!
 //! let vec = PopulatedVec::new(1);
 //! assert_eq!(vec.len().get(), 1);
 //! assert_eq!(vec.first(), &1);
-//! 
+//!
 //! let slice = vec.as_slice();
 //! assert_eq!(slice.len().get(), 1);
 //! assert_eq!(slice.first(), &1);
 //! ```
-//! 
+//!
 //! `clear()` on a `BTreeMap`:
-//! 
+//!
 //! ```
 //! use populated::PopulatedBTreeMap;
-//! 
+//!
 //! let mut map = PopulatedBTreeMap::new("a", 1);
 //! map.insert("b", 2);
 //! assert_eq!(map.len().get(), 2);
-//! 
+//!
 //! // Safe transition to std BTreeMap on clear
 //! let map = map.clear();
 //! assert_eq!(map.len(), 0);
 //! ```
-
 
 use std::{
     borrow::{Borrow, BorrowMut, Cow},
@@ -68,7 +67,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, TryReserveError, VecDeque},
     hash::{BuildHasher, Hash, RandomState},
     num::NonZeroUsize,
-    ops::{BitOr, Deref, DerefMut, Index, RangeBounds},
+    ops::{BitOr, Deref, DerefMut, Index, IndexMut, RangeBounds, RangeFull},
 };
 
 /// A non-empty `Vec` with at least one element.
@@ -99,11 +98,16 @@ impl<T> PopulatedVec<T> {
         PopulatedVec(vec![value])
     }
 
+    pub fn with_capacity(capacity: NonZeroUsize, value: T) -> PopulatedVec<T> {
+        let vec = Vec::with_capacity(capacity.get());
+        PopulatedVec::pushed(vec, value)
+    }
+
     /// Constructs a `PopulatedVec` from a `Vec<T>` by pushing a single element to it.
-    /// 
+    ///
     /// ```
     /// use populated::PopulatedVec;
-    /// 
+    ///
     /// let vec = vec![1];
     /// let vec = PopulatedVec::pushed(vec, 2);
     /// assert_eq!(vec.len().get(), 2);
@@ -444,7 +448,54 @@ impl<T: PartialEq> PopulatedVec<T> {
     }
 }
 
+impl<T> Index<usize> for PopulatedVec<T> {
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.0[index]
+    }
+}
+
+impl<T> Index<NonZeroUsize> for PopulatedVec<T> {
+    type Output = T;
+
+    fn index(&self, index: NonZeroUsize) -> &Self::Output {
+        &self.0[index.get() - 1]
+    }
+}
+
+impl<T> IndexMut<usize> for PopulatedVec<T> {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.0[index]
+    }
+}
+
+impl<T> Index<RangeFull> for PopulatedVec<T> {
+    type Output = PopulatedSlice<T>;
+
+    fn index(&self, _: RangeFull) -> &Self::Output {
+        self.deref()
+    }
+}
+
+impl<T> IndexMut<RangeFull> for PopulatedVec<T> {
+    fn index_mut(&mut self, _: RangeFull) -> &mut Self::Output {
+        self.deref_mut()
+    }
+}
+
+impl<T> PopulatedVec<T> {
+    pub fn iter(&self) -> crate::slice::PopulatedIter<'_, T> {
+        self.into_populated_iter()
+    }
+
+    pub fn iter_mut(&mut self) -> slice::PopulatedIterMut<T> {
+        self.into_populated_iter()
+    }
+}
+
 #[derive(PartialEq, PartialOrd, Eq, Ord, Debug)]
+#[repr(transparent)]
 pub struct PopulatedSlice<T>([T]);
 
 impl<'a, T> From<&'a PopulatedSlice<T>> for &'a [T] {
@@ -477,7 +528,7 @@ impl<'a, T> TryFrom<&'a [T]> for &'a PopulatedSlice<T> {
 impl<'a, T> TryFrom<&'a mut [T]> for &'a mut PopulatedSlice<T> {
     type Error = UnpopulatedError;
 
-    fn try_from(slice: &mut [T]) -> Result<&mut PopulatedSlice<T>, Self::Error> {
+    fn try_from(slice: &'a mut [T]) -> Result<&'a mut PopulatedSlice<T>, Self::Error> {
         if slice.is_empty() {
             Err(UnpopulatedError)
         } else {
@@ -486,7 +537,29 @@ impl<'a, T> TryFrom<&'a mut [T]> for &'a mut PopulatedSlice<T> {
     }
 }
 
+impl<T> Index<usize> for PopulatedSlice<T> {
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.0[index]
+    }
+}
+
+impl<T> IndexMut<usize> for PopulatedSlice<T> {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.0[index]
+    }
+}
+
 impl<T> PopulatedSlice<T> {
+    pub fn iter(&self) -> slice::PopulatedIter<T> {
+        self.into_populated_iter()
+    }
+
+    pub fn iter_mut(&mut self) -> slice::PopulatedIterMut<T> {
+        self.into_populated_iter()
+    }
+
     pub fn len(&self) -> NonZeroUsize {
         NonZeroUsize::new(self.0.len()).unwrap() // TODO: this can be done without unwrap safely because this is a PopulatedSlice
     }
@@ -1008,12 +1081,12 @@ impl<T> PopulatedVecDeque<T> {
 
     /// Constructs a `PopulatedVecDeque` from a `VecDeque` by pushing back a
     /// single element.
-    /// 
+    ///
     /// ```
     /// use std::collections::VecDeque;
     /// use std::num::NonZeroUsize;
     /// use populated::PopulatedVecDeque;
-    /// 
+    ///
     /// let vec_deque = VecDeque::from([1, 2, 3]);
     /// let populated_vec_deque = PopulatedVecDeque::pushed_back(vec_deque, 42);
     /// assert_eq!(populated_vec_deque.len(), NonZeroUsize::new(4).unwrap());
@@ -1031,12 +1104,12 @@ impl<T> PopulatedVecDeque<T> {
 
     /// Constructs a `PopulatedVecDeque` from a `VecDeque` by pushing front a
     /// single element.
-    /// 
+    ///
     /// ```
     /// use std::collections::VecDeque;
     /// use std::num::NonZeroUsize;
     /// use populated::PopulatedVecDeque;
-    /// 
+    ///
     /// let vec_deque = VecDeque::from([1, 2, 3]);
     /// let populated_vec_deque = PopulatedVecDeque::pushed_front(42, vec_deque);
     /// assert_eq!(populated_vec_deque.len(), NonZeroUsize::new(4).unwrap());
@@ -1373,8 +1446,46 @@ impl<T: PartialEq> PartialEq<PopulatedVecDeque<T>> for VecDeque<T> {
     }
 }
 
+impl<T> Index<usize> for PopulatedVecDeque<T> {
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.0[index]
+    }
+}
+
+impl<T> IndexMut<usize> for PopulatedVecDeque<T> {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.0[index]
+    }
+}
+
+impl<T> Index<NonZeroUsize> for PopulatedVecDeque<T> {
+    type Output = T;
+
+    fn index(&self, index: NonZeroUsize) -> &Self::Output {
+        &self.0[index.get() - 1]
+    }
+}
+
+impl<T> IndexMut<NonZeroUsize> for PopulatedVecDeque<T> {
+    fn index_mut(&mut self, index: NonZeroUsize) -> &mut Self::Output {
+        &mut self.0[index.get() - 1]
+    }
+}
+
+impl<T> PopulatedVecDeque<T> {
+    pub fn iter(&self) -> vec_deque::PopulatedIter<T> {
+        self.into_populated_iter()
+    }
+
+    pub fn iter_mut(&mut self) -> vec_deque::PopulatedIterMut<T> {
+        self.into_populated_iter()
+    }
+}
+
 /// An iterator that guaratees that there is at least one element.
-pub trait PopulatedIterator : IntoIterator// to enable using in for loops
+pub trait PopulatedIterator: IntoIterator // to enable using in for loops
 {
     /// Advances the iterator and returns the first value and a new iterator
     /// to the remaining values.
@@ -1435,10 +1546,12 @@ pub trait PopulatedIterator : IntoIterator// to enable using in for loops
         iter::Take::new(self, n)
     }
 
-
     /// Creates an iterator that works like `map`, but flattens nested populated structure. Preserves the
     /// populated property.
-    fn flat_map<B: IntoPopulatedIterator, F: FnMut(Self::Item) -> B>(self, f: F) -> iter::Flatten<iter::Map<Self, F>>
+    fn flat_map<B: IntoPopulatedIterator, F: FnMut(Self::Item) -> B>(
+        self,
+        f: F,
+    ) -> iter::Flatten<iter::Map<Self, F>>
     where
         Self: Sized,
     {
@@ -1448,7 +1561,7 @@ pub trait PopulatedIterator : IntoIterator// to enable using in for loops
     /// Returns the maximum element of the iterator. Note that unlike the standard library, this
     /// method directly returns the maximum element instead of an `Option`. This is because this
     /// method is only available on populated iterators.
-    fn max(self) -> Self::Item 
+    fn max(self) -> Self::Item
     where
         Self::Item: Ord,
         Self: Sized,
@@ -1457,7 +1570,7 @@ pub trait PopulatedIterator : IntoIterator// to enable using in for loops
     }
 
     /// Returns the minimum element of the iterator.
-    fn min(self) -> Self::Item 
+    fn min(self) -> Self::Item
     where
         Self::Item: Ord,
         Self: Sized,
@@ -1470,7 +1583,10 @@ pub trait PopulatedIterator : IntoIterator// to enable using in for loops
     where
         Self: Sized,
     {
-        iter::Chain { prefix: self, iter: other.into_iter() }
+        iter::Chain {
+            prefix: self,
+            iter: other.into_iter(),
+        }
     }
 
     /// Reduces the iterator to a single value using a closure. Note that unlike the standard library,
@@ -1479,7 +1595,7 @@ pub trait PopulatedIterator : IntoIterator// to enable using in for loops
     fn reduce(self, f: impl FnMut(Self::Item, Self::Item) -> Self::Item) -> Self::Item
     where
         Self: Sized,
-    {   
+    {
         let (first, iter) = self.next();
         iter.fold(first, f)
     }
@@ -1523,7 +1639,6 @@ pub trait PopulatedIterator : IntoIterator// to enable using in for loops
     {
         self.into_iter().min_by(compare).unwrap() // TODO: this can be done without unwrap safely because this is a PopulatedIterator
     }
-
 }
 
 pub mod iter {
@@ -1537,7 +1652,6 @@ pub mod iter {
         pub(crate) f: F,
     }
 
-
     impl<I: PopulatedIterator, B, F: FnMut(I::Item) -> B> IntoIterator for Map<I, F> {
         type Item = B;
         type IntoIter = std::iter::Map<I::IntoIter, F>;
@@ -1547,7 +1661,7 @@ pub mod iter {
         }
     }
 
-    impl<I: PopulatedIterator, F : FnMut(I::Item) -> O, O> PopulatedIterator for Map<I, F> {
+    impl<I: PopulatedIterator, F: FnMut(I::Item) -> O, O> PopulatedIterator for Map<I, F> {
         fn next(mut self) -> (Self::Item, Self::IntoIter) {
             let (item, iter) = self.iter.next();
             ((self.f)(item), iter.map(self.f))
@@ -1602,8 +1716,9 @@ pub mod iter {
         pub(crate) iter: I,
     }
 
-    impl<I: PopulatedIterator> IntoIterator for Flatten<I> 
-    where I::Item: IntoPopulatedIterator
+    impl<I: PopulatedIterator> IntoIterator for Flatten<I>
+    where
+        I::Item: IntoPopulatedIterator,
     {
         type Item = <I::Item as IntoIterator>::Item;
         type IntoIter = std::iter::Flatten<I::IntoIter>;
@@ -1613,8 +1728,9 @@ pub mod iter {
         }
     }
 
-    impl<I: PopulatedIterator> PopulatedIterator for Flatten<I> 
-    where I::Item: IntoPopulatedIterator
+    impl<I: PopulatedIterator> PopulatedIterator for Flatten<I>
+    where
+        I::Item: IntoPopulatedIterator,
     {
         fn next(self) -> (Self::Item, Self::IntoIter) {
             let mut iter = self.into_iter();
@@ -1652,7 +1768,6 @@ pub mod iter {
 
     // TODO: Cycle
 
-
     pub struct Chain<P, I> {
         pub(crate) prefix: P,
         pub(crate) iter: I,
@@ -1674,23 +1789,22 @@ pub mod iter {
             (item, prefix.chain(iter))
         }
     }
-
 }
 
 /// Conversion into a `PopulatedIterator`.
-/// 
+///
 /// This trait is used to convert a type into a `PopulatedIterator`.
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```
 /// use populated::{PopulatedVecDeque, IntoPopulatedIterator, PopulatedIterator};
-/// 
+///
 /// let mut vec_deque = PopulatedVecDeque::new(1);
 /// vec_deque.push_back(2);
 /// vec_deque.push_back(3);
 /// let populated_iter = vec_deque.into_populated_iter();
-/// 
+///
 /// let (first, iter) = populated_iter.next();
 /// assert_eq!(first, 1);
 /// assert_eq!(iter.collect::<Vec<_>>(), [2, 3]);
@@ -1714,10 +1828,9 @@ impl<I: PopulatedIterator> IntoPopulatedIterator for I {
 }
 
 /// Conversion from a `PopulatedIterator`.
-/// 
+///
 /// This trait is used to convert a `PopulatedIterator` into `Self`.
 pub trait FromPopulatedIterator<T>: Sized {
-
     /// Converts a `PopulatedIterator` into `Self`.
     fn from_populated_iter(iter: impl IntoPopulatedIterator<Item = T>) -> Self;
 }
@@ -1749,7 +1862,6 @@ pub mod vec {
         }
     }
 
-
     impl<T> IntoIterator for PopulatedVec<T> {
         type Item = T;
         type IntoIter = std::vec::IntoIter<T>;
@@ -1776,7 +1888,7 @@ pub mod slice {
         iter: std::slice::Iter<'a, T>,
     }
 
-    impl <'a, T> IntoIterator for PopulatedIter<'a, T> {
+    impl<'a, T> IntoIterator for PopulatedIter<'a, T> {
         type Item = &'a T;
         type IntoIter = std::slice::Iter<'a, T>;
 
@@ -1786,7 +1898,6 @@ pub mod slice {
     }
 
     impl<'a, T> PopulatedIterator for PopulatedIter<'a, T> {
-
         fn next(mut self) -> (Self::Item, Self::IntoIter) {
             let first = self.iter.next().unwrap(); // TODO: this can be done without unwrap safely because this is a PopulatedSlice
             (first, self.iter)
@@ -1831,11 +1942,6 @@ pub mod slice {
         }
     }
 
-
-    
-
-    
-
     pub struct PopulatedIterMut<'a, T> {
         iter: std::slice::IterMut<'a, T>,
     }
@@ -1850,7 +1956,6 @@ pub mod slice {
     }
 
     impl<'a, T> PopulatedIterator for PopulatedIterMut<'a, T> {
-
         fn next(mut self) -> (Self::Item, Self::IntoIter) {
             let first = self.iter.next().unwrap(); // TODO: this can be done without unwrap safely because this is a PopulatedSlice
             (first, self.iter)
@@ -1912,14 +2017,11 @@ pub mod vec_deque {
     }
 
     impl<T> PopulatedIterator for PopulatedIntoIter<T> {
-        
-
         fn next(mut self) -> (Self::Item, Self::IntoIter) {
             let first = self.iter.next().unwrap(); // TODO: this can be done without unwrap safely because this is a PopulatedVecDeque
             (first, self.iter)
         }
     }
-
 
     impl<T> IntoIterator for PopulatedVecDeque<T> {
         type Item = T;
@@ -1973,7 +2075,9 @@ pub mod vec_deque {
         type PopulatedIntoIter = vec_deque::PopulatedIter<'a, T>;
 
         fn into_populated_iter(self) -> vec_deque::PopulatedIter<'a, T> {
-            vec_deque::PopulatedIter { iter: self.into_iter() }
+            vec_deque::PopulatedIter {
+                iter: self.into_iter(),
+            }
         }
     }
 
@@ -2010,7 +2114,9 @@ pub mod vec_deque {
         type PopulatedIntoIter = vec_deque::PopulatedIterMut<'a, T>;
 
         fn into_populated_iter(self) -> vec_deque::PopulatedIterMut<'a, T> {
-            vec_deque::PopulatedIterMut { iter: self.into_iter() }
+            vec_deque::PopulatedIterMut {
+                iter: self.into_iter(),
+            }
         }
     }
 }
@@ -2138,27 +2244,31 @@ impl<K: Eq + Hash, V, S: BuildHasher> PopulatedHashMap<K, V, S> {
     }
 
     /// Inserts a key-value pair into the map return the map as a `PopulatedHashMap` since inserting guarantees a `len()` > 0.
-    /// 
+    ///
     /// If the map did not have this key present, None is returned.
-    /// 
+    ///
     /// If the map did have this key present, the value is updated, and
     /// the old value is returned. The key is not updated, though; this
     /// matters for types that can be == without being identical. See the
     /// module-level documentation for more.
-    /// 
+    ///
     /// This method is useful when you want to ensure that the map is populated after inserting a key-value pair.
-    /// 
+    ///
     /// ```
     /// use std::collections::HashMap;
     /// use populated::PopulatedHashMap;
     /// use std::num::NonZeroUsize;
-    /// 
+    ///
     /// let mut hash_map = HashMap::from([(42, "the answer")]);
     /// let (old, populated_hash_map) = PopulatedHashMap::inserted(hash_map, 42, "the updated answer");
     /// assert_eq!(populated_hash_map.len(), NonZeroUsize::new(1).unwrap());
     /// assert_eq!(old, Some("the answer"));
     /// ```
-    pub fn inserted(hash_map: HashMap<K, V, S>, key: K, value: V) -> (Option<V>, PopulatedHashMap<K, V, S>) {
+    pub fn inserted(
+        hash_map: HashMap<K, V, S>,
+        key: K,
+        value: V,
+    ) -> (Option<V>, PopulatedHashMap<K, V, S>) {
         let mut hash_map = hash_map;
         let old = hash_map.insert(key, value);
         (old, PopulatedHashMap(hash_map))
@@ -2230,6 +2340,33 @@ impl<Q: Eq + Hash + ?Sized, K: Eq + Hash + Borrow<Q>, V, S: BuildHasher> Index<&
     }
 }
 
+impl<K, V, S> PopulatedHashMap<K, V, S> {
+    pub fn iter(&self) -> hash_map::PopulatedIter<K, V> {
+        self.into_populated_iter()
+    }
+
+    pub fn iter_mut(&mut self) -> hash_map::PopulatedIterMut<K, V> {
+        self.into_populated_iter()
+    }
+
+    pub fn keys(&self) -> hash_map::PopulatedKeys<K, V> {
+        hash_map::PopulatedKeys {
+            keys: self.0.keys(),
+        }
+    }
+
+    pub fn values(&self) -> hash_map::PopulatedValues<K, V> {
+        hash_map::PopulatedValues {
+            values: self.0.values(),
+        }
+    }
+
+    pub fn values_mut(&mut self) -> hash_map::PopulatedValuesMut<K, V> {
+        hash_map::PopulatedValuesMut {
+            values: self.0.values_mut(),
+        }
+    }
+}
 impl<K, V, S> IntoIterator for PopulatedHashMap<K, V, S> {
     type Item = (K, V);
     type IntoIter = std::collections::hash_map::IntoIter<K, V>;
@@ -2339,19 +2476,139 @@ pub mod hash_map {
         }
     }
 
-    impl<'a, K, V, S> IntoPopulatedIterator for &'a mut HashMap<K, V, S> {
+    impl<'a, K, V, S> IntoPopulatedIterator for &'a mut PopulatedHashMap<K, V, S> {
         type PopulatedIntoIter = PopulatedIterMut<'a, K, V>;
 
         fn into_populated_iter(self) -> PopulatedIterMut<'a, K, V> {
             PopulatedIterMut {
-                iter: self.iter_mut(),
+                iter: self.0.iter_mut(),
             }
+        }
+    }
+
+    pub struct PopulatedKeys<'a, K, V> {
+        pub(crate) keys: std::collections::hash_map::Keys<'a, K, V>,
+    }
+
+    impl<'a, K, V> IntoIterator for PopulatedKeys<'a, K, V> {
+        type Item = &'a K;
+        type IntoIter = std::collections::hash_map::Keys<'a, K, V>;
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.keys
+        }
+    }
+
+    impl<'a, K, V> PopulatedIterator for PopulatedKeys<'a, K, V> {
+        fn next(mut self) -> (Self::Item, Self::IntoIter) {
+            let first = self.keys.next().unwrap(); // TODO: this can be done without unwrap safely because this is a PopulatedHashMap
+            (first, self.keys)
+        }
+    }
+
+    pub struct PopulatedValues<'a, K, V> {
+        pub(crate) values: std::collections::hash_map::Values<'a, K, V>,
+    }
+
+    impl<'a, K, V> IntoIterator for PopulatedValues<'a, K, V> {
+        type Item = &'a V;
+        type IntoIter = std::collections::hash_map::Values<'a, K, V>;
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.values
+        }
+    }
+
+    impl<'a, K, V> PopulatedIterator for PopulatedValues<'a, K, V> {
+        fn next(mut self) -> (Self::Item, Self::IntoIter) {
+            let first = self.values.next().unwrap(); // TODO: this can be done without unwrap safely because this is a PopulatedHashMap
+            (first, self.values)
+        }
+    }
+
+    pub struct PopulatedValuesMut<'a, K, V> {
+        pub(crate) values: std::collections::hash_map::ValuesMut<'a, K, V>,
+    }
+
+    impl<'a, K, V> IntoIterator for PopulatedValuesMut<'a, K, V> {
+        type Item = &'a mut V;
+        type IntoIter = std::collections::hash_map::ValuesMut<'a, K, V>;
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.values
+        }
+    }
+
+    impl<'a, K, V> PopulatedIterator for PopulatedValuesMut<'a, K, V> {
+        fn next(mut self) -> (Self::Item, Self::IntoIter) {
+            let first = self.values.next().unwrap(); // TODO: this can be done without unwrap safely because this is a PopulatedHashMap
+            (first, self.values)
+        }
+    }
+
+    pub struct PopulatedIntoKeys<K, V> {
+        pub(crate) keys: std::collections::hash_map::IntoKeys<K, V>,
+    }
+
+    impl<K, V> IntoIterator for PopulatedIntoKeys<K, V> {
+        type Item = K;
+        type IntoIter = std::collections::hash_map::IntoKeys<K, V>;
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.keys
+        }
+    }
+
+    impl<K, V> PopulatedIterator for PopulatedIntoKeys<K, V> {
+        fn next(mut self) -> (Self::Item, Self::IntoIter) {
+            let first = self.keys.next().unwrap(); // TODO: this can be done without unwrap safely because this is a PopulatedHashMap
+            (first, self.keys)
+        }
+    }
+
+    pub struct PopulatedIntoValues<K, V> {
+        pub(crate) values: std::collections::hash_map::IntoValues<K, V>,
+    }
+
+    impl<K, V> IntoIterator for PopulatedIntoValues<K, V> {
+        type Item = V;
+        type IntoIter = std::collections::hash_map::IntoValues<K, V>;
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.values
+        }
+    }
+
+    impl<K, V> PopulatedIterator for PopulatedIntoValues<K, V> {
+        fn next(mut self) -> (Self::Item, Self::IntoIter) {
+            let first = self.values.next().unwrap(); // TODO: this can be done without unwrap safely because this is a PopulatedHashMap
+            (first, self.values)
         }
     }
 }
 /// A hash set that is populated i.e. guaranteed to have at least one element.
 #[derive(Clone, Debug)]
 pub struct PopulatedHashSet<T, S = RandomState>(HashSet<T, S>);
+
+impl<T: Eq + Hash, S: BuildHasher> PartialEq for PopulatedHashSet<T, S> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl<T: Eq + Hash, S: BuildHasher> PartialEq<HashSet<T, S>> for PopulatedHashSet<T, S> {
+    fn eq(&self, other: &HashSet<T, S>) -> bool {
+        &self.0 == other
+    }
+}
+
+impl<T: Eq + Hash, S: BuildHasher> PartialEq<PopulatedHashSet<T, S>> for HashSet<T, S> {
+    fn eq(&self, other: &PopulatedHashSet<T, S>) -> bool {
+        self == &other.0
+    }
+}
+
+impl<T: Eq + Hash, S: BuildHasher> Eq for PopulatedHashSet<T, S> {}
 
 impl<T, S> From<PopulatedHashSet<T, S>> for HashSet<T, S> {
     fn from(populated_hash_set: PopulatedHashSet<T, S>) -> HashSet<T, S> {
@@ -2372,15 +2629,14 @@ impl<T, S> TryFrom<HashSet<T, S>> for PopulatedHashSet<T, S> {
 }
 
 impl<T: Eq + Hash> PopulatedHashSet<T> {
-
     /// Creates a singleton populated hash set i.e. a hash set with a single value.
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```
     /// use populated::PopulatedHashSet;
     /// use std::num::NonZeroUsize;
-    /// 
+    ///
     /// let hash_set = PopulatedHashSet::new(42);
     /// assert_eq!(hash_set.len(), NonZeroUsize::new(1).unwrap());
     /// ```
@@ -2390,17 +2646,17 @@ impl<T: Eq + Hash> PopulatedHashSet<T> {
 
     /// Creates an empty `PopulatedHashSet` with the specified capacity
     /// and containing the given value.
-    /// 
+    ///
     /// Note the capacity must be non-zero and a value must be
     /// supplied because this is a populated hash set i.e. non-empty
     /// hash set.
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```
     /// use populated::PopulatedHashSet;
     /// use std::num::NonZeroUsize;
-    /// 
+    ///
     /// let hash_set = PopulatedHashSet::with_capacity(NonZeroUsize::new(1).unwrap(), 42);
     /// assert_eq!(hash_set.len(), NonZeroUsize::new(1).unwrap());
     /// ```
@@ -2412,15 +2668,14 @@ impl<T: Eq + Hash> PopulatedHashSet<T> {
 }
 
 impl<T, S> PopulatedHashSet<T, S> {
-
     /// Returns the number of elements the set can hold without reallocating.
     /// The capacity is returned as a `NonZeroUsize` because this is a populated hash set.
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```
     /// use populated::PopulatedHashSet;
-    /// 
+    ///
     /// let mut hash_set = PopulatedHashSet::new(42);
     /// hash_set.insert(43);
     /// assert!(hash_set.capacity().get() >= 2);
@@ -2435,14 +2690,14 @@ impl<T, S> PopulatedHashSet<T, S> {
     }
 
     /// Returns the number of elements in the set.
-    /// 
+    ///
     /// The length is returned as a `NonZeroUsize` because this is a populated hash set.
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```
     /// use populated::PopulatedHashSet;
-    /// 
+    ///
     /// let mut hash_set = PopulatedHashSet::new(42);
     /// hash_set.insert(43);
     /// assert_eq!(hash_set.len().get(), 2);
@@ -2452,15 +2707,15 @@ impl<T, S> PopulatedHashSet<T, S> {
     }
 
     /// Retains only the elements specified by the predicate.
-    /// 
-    /// In other words, remove all elements e such that `predicate(&e)` 
+    ///
+    /// In other words, remove all elements e such that `predicate(&e)`
     /// returns `false`.
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```
     /// use populated::PopulatedHashSet;
-    /// 
+    ///
     /// let mut hash_set = PopulatedHashSet::new(42);
     /// hash_set.insert(43);
     /// let hash_set = hash_set.retain(|&e| e == 42);
@@ -2473,18 +2728,18 @@ impl<T, S> PopulatedHashSet<T, S> {
     }
 
     /// Clears the set, removing all values.
-    /// 
+    ///
     /// This method returns the set as a `HashSet` because after clearing
     /// the set is no longer guaranteed to be populated.
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```
     /// use populated::PopulatedHashSet;
-    /// 
+    ///
     /// let mut hash_set = PopulatedHashSet::new(42);
     /// hash_set.insert(43);
-    /// 
+    ///
     /// let hash_set = hash_set.clear();
     /// assert_eq!(hash_set.len(), 0);
     /// ```
@@ -2500,15 +2755,14 @@ impl<T, S> PopulatedHashSet<T, S> {
 }
 
 impl<T: Eq + Hash, S: BuildHasher> PopulatedHashSet<T, S> {
-
     /// Creates a new `PopulatedHashSet` with the given hasher and value.
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```
     /// use populated::PopulatedHashSet;
     /// use std::collections::hash_map::RandomState;
-    /// 
+    ///
     /// let hash_set = PopulatedHashSet::with_hasher(RandomState::new(), 42);
     /// assert_eq!(hash_set.len().get(), 1);
     /// ```
@@ -2520,18 +2774,18 @@ impl<T: Eq + Hash, S: BuildHasher> PopulatedHashSet<T, S> {
 
     /// Creates an empty `PopulatedHashSet` with the specified capacity
     /// and containing the given value.
-    /// 
+    ///
     /// Note the capacity must be non-zero and a value must be
     /// supplied because this is a populated hash set i.e. non-empty
     /// hash set.
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```
     /// use populated::PopulatedHashSet;
     /// use std::collections::hash_map::RandomState;
     /// use std::num::NonZeroUsize;
-    /// 
+    ///
     /// let hash_set = PopulatedHashSet::with_capacity_and_hasher(NonZeroUsize::new(1).unwrap(), RandomState::new(), 42);
     /// assert_eq!(hash_set.len().get(), 1);
     /// ```
@@ -2551,7 +2805,7 @@ impl<T: Eq + Hash, S: BuildHasher> PopulatedHashSet<T, S> {
     }
 
     /// Tries to reserve capacity for at least additional more elements to be inserted in the set.
-    /// If the capacity is already sufficient, nothing happens. If allocation is needed and fails, 
+    /// If the capacity is already sufficient, nothing happens. If allocation is needed and fails,
     /// an error is returned.
     pub fn try_reserve(&mut self, additional: usize) -> Result<(), TryReserveError> {
         self.0.try_reserve(additional)
@@ -2654,20 +2908,20 @@ impl<T: Eq + Hash, S: BuildHasher> PopulatedHashSet<T, S> {
     }
 
     /// Add a value to the hash set, returning the set as a `PopulatedHashSet` since inserting guarantees a `len()` > 0.
-    /// 
+    ///
     /// Returns whether the value was newly inserted. That is:
-    /// 
+    ///
     /// - If the set did not previously contain this value, true is returned.
     /// - If the set already contained this value, false is returned, and the set is not modified: original value is not replaced, and the
     ///  value passed as argument is dropped.
-    /// 
+    ///
     /// This method is useful when you want to ensure that the set is populated after inserting a value.
-    /// 
+    ///
     /// ```
     /// use std::collections::HashSet;
     /// use populated::PopulatedHashSet;
     /// use std::num::NonZeroUsize;
-    /// 
+    ///
     /// let mut hash_set = HashSet::from([42]);
     /// let (inserted, populated_hash_set) = PopulatedHashSet::inserted(hash_set, 43);
     /// assert_eq!(populated_hash_set.len(), NonZeroUsize::new(2).unwrap());
@@ -2787,8 +3041,6 @@ pub mod hash_set {
     }
 
     impl<T> PopulatedIterator for IntoPopulatedIter<T> {
-        
-
         fn next(mut self) -> (Self::Item, Self::IntoIter) {
             let first = self.iter.next().unwrap(); // TODO: this can be done without unwrap safely because this is a PopulatedHashSet
             (first, self.iter)
@@ -2809,7 +3061,6 @@ pub mod hash_set {
         iter: std::collections::hash_set::Iter<'a, T>,
         first: &'a T,
     }
-
 
     impl<'a, T> IntoIterator for PopulatedIter<'a, T> {
         type Item = &'a T;
@@ -2968,16 +3219,13 @@ impl<K: Ord, V> PopulatedBTreeMap<K, V> {
             Err(PopulatedBTreeMap(btree_map))
         }
     }
-    
+
     /// Removes a key from the map, returning the stored key and value if the key was previously in the map.
     ///
     /// The key may be any borrowed form of the map’s key type, but the
     /// ordering on the borrowed form must match the ordering on the key
     /// type.
-    pub fn remove_entry<Q: Ord + ?Sized>(
-        self,
-        k: &Q,
-    ) -> EntryRemovalResult<K, V>
+    pub fn remove_entry<Q: Ord + ?Sized>(self, k: &Q) -> EntryRemovalResult<K, V>
     where
         K: Borrow<Q>,
     {
@@ -3112,7 +3360,6 @@ pub mod btree_map {
         iter: std::collections::btree_map::Iter<'a, K, V>,
     }
 
-
     impl<'a, K, V> IntoIterator for PopulatedIter<'a, K, V> {
         type Item = (&'a K, &'a V);
         type IntoIter = std::collections::btree_map::Iter<'a, K, V>;
@@ -3121,7 +3368,7 @@ pub mod btree_map {
             self.iter
         }
     }
-    
+
     impl<'a, K, V> PopulatedIterator for PopulatedIter<'a, K, V> {
         fn next(mut self) -> (Self::Item, Self::IntoIter) {
             let first = self.iter.next().unwrap(); // TODO: this can be done without unwrap safely because this is a PopulatedBTreeMap
@@ -3168,6 +3415,158 @@ pub mod btree_map {
             }
         }
     }
+
+    pub struct PopulatedKeys<'a, K, V> {
+        pub(crate) iter: std::collections::btree_map::Keys<'a, K, V>,
+    }
+
+    impl<'a, K, V> IntoIterator for PopulatedKeys<'a, K, V> {
+        type Item = &'a K;
+        type IntoIter = std::collections::btree_map::Keys<'a, K, V>;
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.iter
+        }
+    }
+
+    impl<'a, K, V> PopulatedIterator for PopulatedKeys<'a, K, V> {
+        fn next(mut self) -> (Self::Item, Self::IntoIter) {
+            let first = self.iter.next().unwrap(); // TODO: this can be done without unwrap safely because this is a PopulatedBTreeMap
+            (first, self.iter)
+        }
+    }
+
+    pub struct PopulatedValues<'a, K, V> {
+        pub(crate) iter: std::collections::btree_map::Values<'a, K, V>,
+    }
+
+    impl<'a, K, V> IntoIterator for PopulatedValues<'a, K, V> {
+        type Item = &'a V;
+        type IntoIter = std::collections::btree_map::Values<'a, K, V>;
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.iter
+        }
+    }
+
+    impl<'a, K, V> PopulatedIterator for PopulatedValues<'a, K, V> {
+        fn next(mut self) -> (Self::Item, Self::IntoIter) {
+            let first = self.iter.next().unwrap(); // TODO: this can be done without unwrap safely because this is a PopulatedBTreeMap
+            (first, self.iter)
+        }
+    }
+
+    pub struct PopulatedValuesMut<'a, K, V> {
+        pub(crate) iter: std::collections::btree_map::ValuesMut<'a, K, V>,
+    }
+
+    impl<'a, K, V> IntoIterator for PopulatedValuesMut<'a, K, V> {
+        type Item = &'a mut V;
+        type IntoIter = std::collections::btree_map::ValuesMut<'a, K, V>;
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.iter
+        }
+    }
+
+    impl<'a, K, V> PopulatedIterator for PopulatedValuesMut<'a, K, V> {
+        fn next(mut self) -> (Self::Item, Self::IntoIter) {
+            let first = self.iter.next().unwrap(); // TODO: this can be done without unwrap safely because this is a PopulatedBTreeMap
+            (first, self.iter)
+        }
+    }
+
+    pub struct PopulatedIntoKeys<K, V> {
+        pub(crate) iter: std::collections::btree_map::IntoKeys<K, V>,
+    }
+
+    impl<K, V> IntoIterator for PopulatedIntoKeys<K, V> {
+        type Item = K;
+        type IntoIter = std::collections::btree_map::IntoKeys<K, V>;
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.iter
+        }
+    }
+
+    impl<K, V> PopulatedIterator for PopulatedIntoKeys<K, V> {
+        fn next(mut self) -> (Self::Item, Self::IntoIter) {
+            let first = self.iter.next().unwrap(); // TODO: this can be done without unwrap safely because this is a PopulatedBTreeMap
+            (first, self.iter)
+        }
+    }
+
+    pub struct PopulatedIntoValues<K, V> {
+        pub(crate) iter: std::collections::btree_map::IntoValues<K, V>,
+    }
+
+    impl<K, V> IntoIterator for PopulatedIntoValues<K, V> {
+        type Item = V;
+        type IntoIter = std::collections::btree_map::IntoValues<K, V>;
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.iter
+        }
+    }
+
+    impl<K, V> PopulatedIterator for PopulatedIntoValues<K, V> {
+        fn next(mut self) -> (Self::Item, Self::IntoIter) {
+            let first = self.iter.next().unwrap(); // TODO: this can be done without unwrap safely because this is a PopulatedBTreeMap
+            (first, self.iter)
+        }
+    }
+}
+
+impl<K, V> PopulatedBTreeMap<K, V> {
+    pub fn iter(&self) -> btree_map::PopulatedIter<K, V> {
+        self.into_populated_iter()
+    }
+
+    pub fn iter_mut(&mut self) -> btree_map::PopulatedIterMut<K, V> {
+        self.into_populated_iter()
+    }
+
+    pub fn keys(&self) -> btree_map::PopulatedKeys<K, V> {
+        btree_map::PopulatedKeys {
+            iter: self.0.keys(),
+        }
+    }
+
+    pub fn values(&self) -> btree_map::PopulatedValues<K, V> {
+        btree_map::PopulatedValues {
+            iter: self.0.values(),
+        }
+    }
+
+    pub fn values_mut(&mut self) -> btree_map::PopulatedValuesMut<K, V> {
+        btree_map::PopulatedValuesMut {
+            iter: self.0.values_mut(),
+        }
+    }
+
+    pub fn into_keys(self) -> btree_map::PopulatedIntoKeys<K, V> {
+        btree_map::PopulatedIntoKeys {
+            iter: self.0.into_keys(),
+        }
+    }
+
+    pub fn into_values(self) -> btree_map::PopulatedIntoValues<K, V> {
+        btree_map::PopulatedIntoValues {
+            iter: self.0.into_values(),
+        }
+    }
+}
+
+// Indexing BTreeMap
+impl<K, V> std::ops::Index<&K> for PopulatedBTreeMap<K, V>
+where
+    K: Ord,
+{
+    type Output = V;
+
+    fn index(&self, key: &K) -> &V {
+        &self.0[key]
+    }
 }
 
 /// A populated (i.e. guaranteed to be non-empty) ordered set based on a B-Tree.
@@ -3189,6 +3588,12 @@ impl<T> TryFrom<BTreeSet<T>> for PopulatedBTreeSet<T> {
         } else {
             Ok(PopulatedBTreeSet(btree_set))
         }
+    }
+}
+
+impl<T> PopulatedBTreeSet<T> {
+    pub fn iter(&self) -> btree_set::PopulatedIter<T> {
+        self.into_populated_iter()
     }
 }
 
@@ -3351,7 +3756,6 @@ impl<T: Ord> PopulatedBTreeSet<T> {
     pub fn append(&mut self, other: &mut BTreeSet<T>) {
         self.0.append(other);
     }
-
 }
 
 impl<T> PopulatedBTreeSet<T> {
@@ -3388,7 +3792,7 @@ impl<'a, T> IntoIterator for &'a PopulatedBTreeSet<T> {
 
 pub mod btree_set {
 
-    use crate::{IntoPopulatedIterator, PopulatedIterator};
+    use crate::{IntoPopulatedIterator, PopulatedBTreeSet, PopulatedIterator};
 
     pub struct IntoPopulatedIter<T> {
         iter: std::collections::btree_set::IntoIter<T>,
@@ -3414,7 +3818,9 @@ pub mod btree_set {
         type PopulatedIntoIter = IntoPopulatedIter<T>;
 
         fn into_populated_iter(self) -> IntoPopulatedIter<T> {
-            IntoPopulatedIter { iter: self.into_iter() }
+            IntoPopulatedIter {
+                iter: self.into_iter(),
+            }
         }
     }
 
@@ -3438,11 +3844,13 @@ pub mod btree_set {
         }
     }
 
-    impl<'a, T> IntoPopulatedIterator for &'a std::collections::BTreeSet<T> {
+    impl<'a, T> IntoPopulatedIterator for &'a PopulatedBTreeSet<T> {
         type PopulatedIntoIter = PopulatedIter<'a, T>;
 
         fn into_populated_iter(self) -> PopulatedIter<'a, T> {
-            PopulatedIter { iter: self.iter() }
+            PopulatedIter {
+                iter: self.into_iter(),
+            }
         }
     }
 }
@@ -3512,14 +3920,14 @@ impl<T: Ord> PopulatedBinaryHeap<T> {
     ///
     /// In other words, remove all elements e for which f(&e) returns
     /// false. The elements are visited in unsorted (and unspecified) order.
-    /// 
+    ///
     /// Note that the binary heap is not guaranteed to be populated after
     /// calling this method.
-    /// 
+    ///
     /// ```
     /// use populated::PopulatedBinaryHeap;
     /// use std::num::NonZeroUsize;
-    /// 
+    ///
     /// let mut binary_heap = PopulatedBinaryHeap::with_capacity(NonZeroUsize::new(5).unwrap(), 1);
     /// binary_heap.push(2);
     /// binary_heap.push(3);
@@ -3535,11 +3943,11 @@ impl<T: Ord> PopulatedBinaryHeap<T> {
     /// Removes the greatest item from the binary heap and returns it along
     /// with the remaining binary heap. Note that the returned binary heap
     /// is not guaranteed to be populated.
-    /// 
+    ///
     /// ```
     /// use populated::PopulatedBinaryHeap;
     /// use std::num::NonZeroUsize;
-    /// 
+    ///
     /// let mut binary_heap = PopulatedBinaryHeap::with_capacity(NonZeroUsize::new(5).unwrap(), 1);
     /// binary_heap.push(2);
     /// binary_heap.push(3);
@@ -3730,5 +4138,370 @@ pub mod binary_heap {
                 iter: self.into_iter(),
             }
         }
+    }
+}
+
+// Add tests for unsafe coercions involving PopulatedSlice
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::num::NonZeroUsize;
+
+    #[test]
+    fn test_populated_vec() {
+        let mut vec = PopulatedVec(vec![1, 2, 3]);
+        assert_eq!(vec.len().get(), 3);
+        assert_eq!(vec[0], 1);
+        assert_eq!(vec[1], 2);
+        assert_eq!(vec[2], 3);
+        assert_eq!(vec.first(), &1);
+        assert_eq!(vec.last(), &3);
+        assert_eq!(vec.iter().collect::<Vec<_>>(), vec![&1, &2, &3]);
+        assert_eq!(
+            vec.iter_mut().collect::<Vec<_>>(),
+            vec![&mut 1, &mut 2, &mut 3]
+        );
+        assert_eq!(vec.clone().into_iter().collect::<Vec<_>>(), vec![1, 2, 3]);
+        assert_eq!(
+            vec.clone().into_populated_iter().collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        assert_eq!(vec.capacity(), NonZeroUsize::new(3).unwrap());
+        assert_eq!(vec.clone().clear().len(), 0);
+        assert_eq!(vec.into_inner(), vec![1, 2, 3]);
+
+        let mut vec = PopulatedVec::with_capacity(NonZeroUsize::new(5).unwrap(), 1);
+        vec.push(2);
+        vec.push(3);
+        assert_eq!(vec.len().get(), 3);
+        assert_eq!(vec.capacity(), NonZeroUsize::new(5).unwrap());
+
+        let mut other = vec![4, 5, 6];
+        vec.append(&mut other);
+        assert_eq!(vec.len().get(), 6);
+    }
+
+    #[test]
+    fn test_populated_btree_map() {
+        let mut btree_map = PopulatedBTreeMap::new(0, 0);
+        btree_map.insert(1, 2);
+        btree_map.insert(3, 4);
+        assert_eq!(btree_map.len().get(), 3);
+        assert_eq!(btree_map[&1], (2));
+        assert_eq!(btree_map.get_mut(&1), Some(&mut 2));
+        assert_eq!(btree_map.contains_key(&1), true);
+        assert_eq!(btree_map.contains_key(&2), false);
+        assert_eq!(
+            btree_map.iter().collect::<Vec<_>>(),
+            vec![(&0, &0), (&1, &2), (&3, &4)]
+        );
+        assert_eq!(
+            btree_map.iter_mut().collect::<Vec<_>>(),
+            vec![(&0, &mut 0), (&1, &mut 2), (&3, &mut 4)]
+        );
+        assert_eq!(
+            btree_map.clone().into_iter().collect::<Vec<_>>(),
+            vec![(0, 0), (1, 2), (3, 4)]
+        );
+        assert_eq!(
+            btree_map.clone().into_populated_iter().collect::<Vec<_>>(),
+            vec![(0, 0), (1, 2), (3, 4)]
+        );
+
+        let (value, regular_btree_map) = btree_map.clone().remove(&0).unwrap();
+        assert_eq!(value, 0);
+        assert_eq!(regular_btree_map.len(), 2);
+
+        let mut other = BTreeMap::from([(4, 5), (6, 7)]);
+        btree_map.append(&mut other);
+        assert_eq!(btree_map.len().get(), 5);
+    }
+
+    #[test]
+    fn test_populated_btree_set() {
+        let mut btree_set = PopulatedBTreeSet::new(1);
+        btree_set.insert(2);
+        btree_set.insert(3);
+        assert_eq!(btree_set.len().get(), 3);
+        assert_eq!(btree_set.contains(&1), true);
+        assert_eq!(btree_set.contains(&4), false);
+        assert_eq!(btree_set.is_disjoint(&BTreeSet::from([4, 5, 6])), true);
+        assert_eq!(btree_set.is_subset(&BTreeSet::from([1, 2, 3, 4])), true);
+        assert_eq!(btree_set.is_superset(&BTreeSet::from([1, 2, 3])), true);
+        assert_eq!(btree_set.first(), &1);
+        assert_eq!(btree_set.last(), &3);
+        assert_eq!(btree_set.iter().collect::<Vec<_>>(), vec![&1, &2, &3]);
+
+        assert_eq!(
+            btree_set.clone().into_iter().collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        assert_eq!(
+            btree_set.clone().into_populated_iter().collect::<Vec<_>>(),
+            vec![&1, &2, &3]
+        );
+
+        assert_eq!(
+            btree_set
+                .clone()
+                .difference(&BTreeSet::from([1, 2, 3]))
+                .count(),
+            0
+        );
+        assert_eq!(
+            btree_set
+                .clone()
+                .symmetric_difference(&BTreeSet::from([1, 2, 3]))
+                .count(),
+            0
+        );
+        assert_eq!(
+            btree_set
+                .clone()
+                .intersection(&BTreeSet::from([1, 2, 3]))
+                .count(),
+            3
+        );
+
+        assert_eq!(btree_set.clone().retain(|&x| x > 2).len(), 1);
+        assert_eq!(btree_set.clone().pop_first().0, 1);
+        assert_eq!(btree_set.clone().pop_last().1, 3);
+
+        let mut other = BTreeSet::from([4, 5, 6]);
+        btree_set.append(&mut other);
+        assert_eq!(btree_set.len().get(), 6);
+        assert_eq!(other.len(), 0);
+
+        let btree_set = &btree_set | &BTreeSet::from([7, 8, 9]);
+        assert_eq!(btree_set.len().get(), 9);
+
+        // Check for equality
+        let mut btree_set = PopulatedBTreeSet::new(1);
+        btree_set.insert(2);
+        btree_set.insert(3);
+        let mut other = PopulatedBTreeSet::new(3);
+        other.insert(2);
+        other.insert(1);
+        assert_eq!(btree_set, other);
+    }
+
+    #[test]
+    fn test_populated_binary_heap() {
+        let mut binary_heap = PopulatedBinaryHeap::new(1);
+        binary_heap.push(2);
+        binary_heap.push(3);
+        assert_eq!(binary_heap.len().get(), 3);
+        assert_eq!(binary_heap.peek(), &3);
+        assert_eq!(binary_heap.clone().into_vec().len().get(), 3);
+        assert_eq!(binary_heap.clone().into_sorted_vec().len().get(), 3);
+        assert_eq!(binary_heap.clone().clear().len(), 0);
+        assert_eq!(binary_heap.clone().pop().0, 3);
+        assert_eq!(binary_heap.clone().pop().1.len(), 2);
+        assert_eq!(binary_heap.clone().retain(|&x| x > 2).len(), 1);
+
+        let mut other = BinaryHeap::from([4, 5, 6]);
+        binary_heap.append(&mut other);
+        assert_eq!(binary_heap.len().get(), 6);
+    }
+
+    #[test]
+    fn test_populated_slice() {
+        let test = [1, 2, 3];
+        let slice: &PopulatedSlice<_> = TryFrom::try_from(&test[..]).unwrap();
+        assert_eq!(slice.len().get(), 3);
+        assert_eq!(slice[0], 1);
+        assert_eq!(slice[1], 2);
+        assert_eq!(slice[2], 3);
+        assert_eq!(slice.first(), &1);
+        assert_eq!(slice.last(), &3);
+        assert_eq!(slice.iter().collect::<Vec<_>>(), vec![&1, &2, &3]);
+    }
+
+    #[test]
+    fn test_populated_slice_mut() {
+        let mut test = [1, 2, 3];
+        let slice: &mut PopulatedSlice<_> = TryFrom::try_from(&mut test[..]).unwrap();
+        assert_eq!(slice.len().get(), 3);
+        assert_eq!(slice[0], 1);
+        assert_eq!(slice[1], 2);
+        assert_eq!(slice[2], 3);
+        assert_eq!(slice.first(), &1);
+        assert_eq!(slice.last(), &3);
+        assert_eq!(slice.iter().collect::<Vec<_>>(), vec![&1, &2, &3]);
+    }
+
+    #[test]
+    fn test_populated_slice_from_vec() {
+        let vec = vec![1, 2, 3];
+        let slice: &PopulatedSlice<_> = TryFrom::try_from(&vec[..]).unwrap();
+        assert_eq!(slice.len().get(), 3);
+        assert_eq!(slice[0], 1);
+        assert_eq!(slice[1], 2);
+        assert_eq!(slice[2], 3);
+        assert_eq!(slice.first(), &1);
+        assert_eq!(slice.last(), &3);
+        assert_eq!(slice.iter().collect::<Vec<_>>(), vec![&1, &2, &3]);
+    }
+
+    #[test]
+    fn test_populated_slice_mut_from_vec() {
+        let mut vec = vec![1, 2, 3];
+        let slice: &mut PopulatedSlice<_> = TryFrom::try_from(&mut vec[..]).unwrap();
+        assert_eq!(slice.len().get(), 3);
+        assert_eq!(slice[0], 1);
+        assert_eq!(slice[1], 2);
+        assert_eq!(slice[2], 3);
+        assert_eq!(slice.first(), &1);
+        assert_eq!(slice.last(), &3);
+        assert_eq!(slice.iter().collect::<Vec<_>>(), vec![&1, &2, &3]);
+    }
+
+    #[test]
+    fn test_populated_slice_from_slice() {
+        let slice = &[1, 2, 3][..];
+        let slice: &PopulatedSlice<_> = TryFrom::try_from(slice).unwrap();
+        assert_eq!(slice.len().get(), 3);
+        assert_eq!(slice[0], 1);
+        assert_eq!(slice[1], 2);
+        assert_eq!(slice[2], 3);
+        assert_eq!(slice.first(), &1);
+        assert_eq!(slice.last(), &3);
+        assert_eq!(slice.iter().collect::<Vec<_>>(), vec![&1, &2, &3]);
+    }
+
+    #[test]
+    fn test_populated_slice_mut_from_slice() {
+        let slice = &mut [1, 2, 3][..];
+        let slice: &mut PopulatedSlice<_> = TryFrom::try_from(slice).unwrap();
+        assert_eq!(slice.len().get(), 3);
+        assert_eq!(slice[0], 1);
+        assert_eq!(slice[1], 2);
+        assert_eq!(slice[2], 3);
+        assert_eq!(slice.first(), &1);
+        assert_eq!(slice.last(), &3);
+        assert_eq!(slice.iter().collect::<Vec<_>>(), vec![&1, &2, &3]);
+    }
+
+    #[test]
+    fn test_populated_slice_from_populated_vec() {
+        let vec = PopulatedVec(vec![1, 2, 3]);
+        let slice: &PopulatedSlice<_> = TryFrom::try_from(&vec[..]).unwrap();
+        assert_eq!(slice.len().get(), 3);
+        assert_eq!(slice[0], 1);
+        assert_eq!(slice[1], 2);
+        assert_eq!(slice[2], 3);
+        assert_eq!(slice.first(), &1);
+        assert_eq!(slice.last(), &3);
+        assert_eq!(slice.iter().collect::<Vec<_>>(), vec![&1, &2, &3]);
+    }
+
+    #[test]
+    fn test_populated_slice_mut_from_populated_vec() {
+        let mut vec = PopulatedVec(vec![1, 2, 3]);
+        let slice: &mut PopulatedSlice<_> = TryFrom::try_from(&mut vec[..]).unwrap();
+        assert_eq!(slice.len().get(), 3);
+        assert_eq!(slice[0], 1);
+        assert_eq!(slice[1], 2);
+        assert_eq!(slice[2], 3);
+        assert_eq!(slice.first(), &1);
+        assert_eq!(slice.last(), &3);
+        assert_eq!(slice.iter().collect::<Vec<_>>(), vec![&1, &2, &3]);
+    }
+
+    #[test]
+    fn test_populated_slice_from_populated_slice() {
+        let slice: &PopulatedSlice<_> = TryFrom::try_from(&[1, 2, 3][..]).unwrap();
+        assert_eq!(slice.len().get(), 3);
+        assert_eq!(slice[0], 1);
+        assert_eq!(slice[1], 2);
+        assert_eq!(slice[2], 3);
+        assert_eq!(slice.first(), &1);
+        assert_eq!(slice.last(), &3);
+        assert_eq!(slice.iter().collect::<Vec<_>>(), vec![&1, &2, &3]);
+    }
+
+    #[test]
+    fn test_populated_slice_mut_from_populated_slice() {
+        let mut array = [1, 2, 3];
+        let slice: &mut PopulatedSlice<_> = TryFrom::try_from(&mut array[..]).unwrap();
+        assert_eq!(slice.len().get(), 3);
+        assert_eq!(slice[0], 1);
+        assert_eq!(slice[1], 2);
+        assert_eq!(slice[2], 3);
+        assert_eq!(slice.first(), &1);
+        assert_eq!(slice.last(), &3);
+        assert_eq!(slice.iter().collect::<Vec<_>>(), vec![&1, &2, &3]);
+    }
+
+    #[test]
+    fn test_populated_vec_deque() {
+        let mut vec_deque = PopulatedVecDeque::new(1);
+        vec_deque.push_back(2);
+        vec_deque.push_back(3);
+        assert_eq!(vec_deque.len().get(), 3);
+        assert_eq!(vec_deque[0], 1);
+        assert_eq!(vec_deque[1], 2);
+        assert_eq!(vec_deque[2], 3);
+        assert_eq!(vec_deque.front(), &1);
+        assert_eq!(vec_deque.back(), &3);
+        assert_eq!(vec_deque.iter().collect::<Vec<_>>(), vec![&1, &2, &3]);
+        assert_eq!(
+            vec_deque.iter_mut().collect::<Vec<_>>(),
+            vec![&mut 1, &mut 2, &mut 3]
+        );
+        assert_eq!(
+            vec_deque.clone().into_iter().collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        assert_eq!(
+            vec_deque.clone().into_populated_iter().collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        assert_eq!(vec_deque.clone().clear().len(), 0);
+        assert_eq!(vec_deque.clone().pop_front(), (1, VecDeque::from([2, 3])));
+        assert_eq!(vec_deque.clone().pop_back(), (VecDeque::from([1, 2]), 3));
+    }
+
+    #[test]
+    fn test_populated_hash_map() {
+        let mut hash_map = PopulatedHashMap::new(1, 2);
+        hash_map.insert(3, 4);
+        assert_eq!(hash_map.len().get(), 2);
+        assert_eq!(hash_map[&1], 2);
+        assert_eq!(hash_map.get_mut(&1), Some(&mut 2));
+        assert_eq!(hash_map.contains_key(&1), true);
+        assert_eq!(hash_map.contains_key(&2), false);
+        assert_eq!(
+            hash_map.iter().collect::<Vec<_>>(),
+            vec![(&1, &2), (&3, &4)]
+        );
+        assert_eq!(
+            hash_map.iter_mut().collect::<Vec<_>>(),
+            vec![(&1, &mut 2), (&3, &mut 4)]
+        );
+        assert_eq!(
+            hash_map.clone().into_iter().collect::<Vec<_>>(),
+            vec![(1, 2), (3, 4)]
+        );
+        assert_eq!(
+            hash_map.clone().into_populated_iter().collect::<Vec<_>>(),
+            vec![(1, 2), (3, 4)]
+        );
+    }
+
+    #[test]
+    fn test_populated_hash_set() {
+        let mut hash_set = PopulatedHashSet::new(1);
+        hash_set.insert(2);
+        hash_set.insert(3);
+        assert_eq!(hash_set.len().get(), 3);
+        assert_eq!(hash_set.contains(&1), true);
+        assert_eq!(hash_set.contains(&4), false);
+        assert_eq!(hash_set.is_disjoint(&HashSet::from([4, 5, 6])), true);
+        assert_eq!(hash_set.is_subset(&HashSet::from([1, 2, 3, 4])), true);
+        assert_eq!(hash_set.is_superset(&HashSet::from([1, 2, 3])), true);
+
+        assert_eq!(hash_set, HashSet::from([1, 2, 3]));
     }
 }
