@@ -85,21 +85,21 @@ impl<T> TryFrom<Vec<T>> for PopulatedVec<T> {
 
     /// Attempts to create a `PopulatedVec` from a `Vec`. If the `Vec` is empty, it returns the original `Vec` as an error.
     /// Otherwise, it returns a `PopulatedVec` with `Ok`.
-    /// 
+    ///
     /// ```
     /// use populated::PopulatedVec;
-    /// 
+    ///
     /// let vec = vec![1];
     /// let vec = PopulatedVec::try_from(vec).unwrap();
     /// assert_eq!(vec.len().get(), 1);
     /// assert_eq!(vec.first(), &1);
     /// ```
-    /// 
+    ///
     /// If the `Vec` is empty, it returns the original `Vec` as an error.
-    /// 
+    ///
     /// ```
     /// use populated::PopulatedVec;
-    /// 
+    ///
     /// let vec: Vec<u64> = vec![];
     /// let vec = PopulatedVec::try_from(vec);
     /// assert_eq!(vec, Err(vec![]));
@@ -120,7 +120,7 @@ impl<T> PopulatedVec<T> {
     }
 
     /// Creates a new `PopulatedVec` with the specified capacity.
-    /// The capacity must be non-zero. This creates a `PopulatedVec` with the specified capacity and the first element initialized 
+    /// The capacity must be non-zero. This creates a `PopulatedVec` with the specified capacity and the first element initialized
     /// with the provided value.
     pub fn with_capacity(capacity: NonZeroUsize, value: T) -> PopulatedVec<T> {
         let vec = Vec::with_capacity(capacity.get());
@@ -144,10 +144,10 @@ impl<T> PopulatedVec<T> {
     }
 
     /// Constructs a `PopulatedVec` from a `Vec<T>` by providing the first element and the rest of the elements from an array.
-    /// 
+    ///
     /// ```
     /// use populated::PopulatedVec;
-    /// 
+    ///
     /// let vec = PopulatedVec::from_first_and_rest_array(1, [2, 3]);
     /// assert_eq!(vec.len().get(), 3);
     /// assert_eq!(vec.first(), &1);
@@ -171,10 +171,10 @@ impl<T> PopulatedVec<T> {
 
     /// Appends elements from a slice to the back of a collection.
     /// This is a safe operation because this is a `PopulatedVec`.
-    /// 
+    ///
     /// ```
     /// use populated::PopulatedVec;
-    /// 
+    ///
     /// let mut vec = PopulatedVec::new(1);
     /// vec.extend_from_slice(&[2, 3]);
     /// assert_eq!(vec.len().get(), 3);
@@ -467,7 +467,6 @@ impl<T> PopulatedVec<T> {
     // }
 }
 impl<T: Clone> PopulatedVec<T> {
-
     /// Resizes the vector in place so that `len` is equal to `new_len`.
     /// If `new_len` is greater than `len`, the vector is extended by the
     /// difference, with each additional slot filled with `value`. If `new_len`
@@ -480,7 +479,7 @@ impl<T: Clone> PopulatedVec<T> {
     /// If `new_len` is greater than `len`, the vector is extended by the
     /// difference, with each additional slot filled with `value`. If `new_len`
     /// is less than `len`, the vector is simply truncated.
-    /// 
+    ///
     /// This is a safe operation because this it returns the underlying `Vec` that can be empty.
     pub fn resize_into(self, new_len: usize, value: T) -> Vec<T> {
         let mut vec = self.0;
@@ -535,9 +534,7 @@ impl<T> Index<NonZeroUsize> for PopulatedVec<T> {
     }
 }
 
-
 impl<T> IndexMut<usize> for PopulatedVec<T> {
-
     /// Performs the mutable indexing (`container[index]`) operation.
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         &mut self.0[index]
@@ -547,13 +544,13 @@ impl<T> IndexMut<usize> for PopulatedVec<T> {
 impl<T> Index<RangeFull> for PopulatedVec<T> {
     type Output = PopulatedSlice<T>;
 
+    /// Performs the indexing (`container[..]`) operation to get a slice of the complete vector.
     fn index(&self, _: RangeFull) -> &Self::Output {
         self.deref()
     }
 }
 
 impl<T> IndexMut<RangeFull> for PopulatedVec<T> {
-
     /// Performs the mutable indexing (`container[..]`) operation to get a mutable reference to get a slice of the complete vector.
     fn index_mut(&mut self, _: RangeFull) -> &mut Self::Output {
         self.deref_mut()
@@ -561,7 +558,6 @@ impl<T> IndexMut<RangeFull> for PopulatedVec<T> {
 }
 
 impl<T> PopulatedVec<T> {
-
     /// Returns a populated iterator over the elements of the vector.
     pub fn iter(&self) -> crate::slice::PopulatedIter<'_, T> {
         self.into_populated_iter()
@@ -573,11 +569,10 @@ impl<T> PopulatedVec<T> {
     }
 }
 
-
 /// A macro pvec! to create a PopulatedVec with a list of elements.
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```
 /// use populated::pvec;
 /// let vec = pvec![1, 2, 3];
@@ -585,9 +580,9 @@ impl<T> PopulatedVec<T> {
 /// assert_eq!(vec.first(), &1);
 /// assert_eq!(vec.last(), &3);
 /// ```
-/// 
+///
 /// Works with a single element
-/// 
+///
 /// ```
 /// use populated::pvec;
 /// let vec = pvec![1];
@@ -597,7 +592,7 @@ impl<T> PopulatedVec<T> {
 /// ```
 ///
 /// Works with trailing comma
-/// 
+///
 /// ```
 /// use populated::pvec;
 /// let vec = pvec![1, 2, 3,];
@@ -605,9 +600,9 @@ impl<T> PopulatedVec<T> {
 /// assert_eq!(vec.first(), &1);
 /// assert_eq!(vec.last(), &3);
 /// ```
-/// 
+///
 /// Fails to compile if no elements are provided
-/// 
+///
 /// ```compile_fail
 /// use populated::pvec;
 /// // This will result in a compile-time error. Test should pass if the code fails to compile.
@@ -629,12 +624,14 @@ macro_rules! pvec {
 pub struct PopulatedSlice<T>([T]);
 
 impl<'a, T> From<&'a PopulatedSlice<T>> for &'a [T] {
+    /// Convert a PopulatedSlice to a slice.
     fn from(populated_slice: &PopulatedSlice<T>) -> &[T] {
         &populated_slice.0
     }
 }
 
 impl<'a, T> From<&'a mut PopulatedSlice<T>> for &'a mut [T] {
+    /// Convert a mutable PopulatedSlice to a mutable slice.
     fn from(populated_slice: &mut PopulatedSlice<T>) -> &mut [T] {
         &mut populated_slice.0
     }
@@ -646,7 +643,29 @@ pub struct UnpopulatedError;
 impl<'a, T> TryFrom<&'a [T]> for &'a PopulatedSlice<T> {
     type Error = UnpopulatedError;
 
-    fn try_from(slice: &[T]) -> Result<&PopulatedSlice<T>, Self::Error> {
+    /// Convert a slice to a PopulatedSlice. If the slice is empty, an error is returned.
+    /// If the slice is not empty, a reference to the PopulatedSlice is returned.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use populated::PopulatedSlice;
+    /// use std::convert::TryFrom;
+    ///
+    /// let slice: &[u64] = &[1, 2, 3];
+    /// let populated_slice: &PopulatedSlice<u64> = TryFrom::try_from(slice).unwrap();
+    /// assert_eq!(populated_slice.len().get(), 3);
+    /// ```
+    ///
+    /// ```
+    /// use populated::{PopulatedSlice, UnpopulatedError};
+    /// use std::convert::TryFrom;
+    ///
+    /// let slice: &[u64] = &[];
+    /// let populated_slice: Result<&PopulatedSlice<u64>, UnpopulatedError> = TryFrom::try_from(slice);
+    /// assert!(populated_slice.is_err());
+    /// ```
+    fn try_from(slice: &'a [T]) -> Result<&'a PopulatedSlice<T>, Self::Error> {
         if slice.is_empty() {
             Err(UnpopulatedError)
         } else {
@@ -670,26 +689,39 @@ impl<'a, T> TryFrom<&'a mut [T]> for &'a mut PopulatedSlice<T> {
 impl<T> Index<usize> for PopulatedSlice<T> {
     type Output = T;
 
+    /// Index into the populated slice.
     fn index(&self, index: usize) -> &Self::Output {
         &self.0[index]
     }
 }
 
 impl<T> IndexMut<usize> for PopulatedSlice<T> {
+    /// Index into the populated slice mutably.
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         &mut self.0[index]
     }
 }
 
 impl<T> PopulatedSlice<T> {
+    /// Returns a populated iterator over the slice.
     pub fn iter(&self) -> slice::PopulatedIter<T> {
         self.into_populated_iter()
     }
 
+    /// Returns a mutable populated iterator over the slice.
     pub fn iter_mut(&mut self) -> slice::PopulatedIterMut<T> {
         self.into_populated_iter()
     }
 
+    /// Returns the length of the populated slice.
+    ///
+    /// ```
+    /// use populated::PopulatedSlice;
+    /// use std::num::NonZeroUsize;
+    ///
+    /// let slice: &PopulatedSlice<u64> = TryFrom::try_from(&[1, 2, 3]).unwrap();
+    /// assert_eq!(slice.len(), NonZeroUsize::new(3).unwrap());
+    /// ```
     pub fn len(&self) -> NonZeroUsize {
         NonZeroUsize::new(self.0.len()).unwrap() // TODO: this can be done without unwrap safely because this is a PopulatedSlice
     }
@@ -705,18 +737,27 @@ impl<T> PopulatedSlice<T> {
         self.0.first_mut().unwrap() // TODO: this can be done without unwrap safely because this is a PopulatedSlice
     }
 
+    /// Returns the first and all the rest of the elements of the populated slice.
+    /// Note that the returned slice can be empty. It is not a PopulatedSlice.
     pub fn split_first(&self) -> (&T, &[T]) {
         self.0.split_first().unwrap() // TODO: this can be done without unwrap safely because this is a PopulatedSlice
     }
 
+    /// Returns the first and all the rest of the elements of the populated slice. The returned
+    /// first element and the rest of the elements are mutable.
+    /// Note that the returned slice can be empty. It is not a PopulatedSlice.
     pub fn split_first_mut(&mut self) -> (&mut T, &mut [T]) {
         self.0.split_first_mut().unwrap() // TODO: this can be done without unwrap safely because this is a PopulatedSlice
     }
 
+    /// Returns the last and all the rest of the elements of the populated slice.
+    /// Note that the returned slice can be empty. It is not a PopulatedSlice.
     pub fn split_last(&self) -> (&T, &[T]) {
         self.0.split_last().unwrap() // TODO: this can be done without unwrap safely because this is a PopulatedSlice
     }
 
+    /// Returns the mutable last and all the rest of the elements of the populated slice as a mutable slice.
+    /// Note that the returned slice can be empty. It is not a PopulatedSlice.
     pub fn split_last_mut(&mut self) -> (&mut T, &mut [T]) {
         self.0.split_last_mut().unwrap() // TODO: this can be done without unwrap safely because this is a PopulatedSlice
     }
@@ -744,6 +785,9 @@ impl<T> PopulatedSlice<T> {
         self.0.reverse();
     }
 
+    /// Returns a reference to an element or subslice depending on the type of
+    /// index. Since mid is a NonZeroUsize, it is guaranteed that the first slice is
+    /// populated.
     pub fn split_at_populated(&self, mid: NonZeroUsize) -> (&PopulatedSlice<T>, &[T]) {
         let (left, right) = self.0.split_at(mid.get());
         (
@@ -761,6 +805,9 @@ impl<T> PopulatedSlice<T> {
         self.0.split_at(mid)
     }
 
+    /// Returns a mutable reference to an element or subslice depending on the
+    /// type of index. Since mid is a NonZeroUsize, it is guaranteed that the first slice is
+    /// populated.
     pub fn split_at_mut_populated(
         &mut self,
         mid: NonZeroUsize,
@@ -4595,29 +4642,24 @@ mod tests {
 
     #[test]
     fn test_populated_hash_map() {
+        use std::collections::HashSet;
+
         let mut hash_map = PopulatedHashMap::new(1, 2);
         hash_map.insert(3, 4);
+
         assert_eq!(hash_map.len().get(), 2);
         assert_eq!(hash_map[&1], 2);
         assert_eq!(hash_map.get_mut(&1), Some(&mut 2));
         assert_eq!(hash_map.contains_key(&1), true);
         assert_eq!(hash_map.contains_key(&2), false);
-        assert_eq!(
-            hash_map.iter().collect::<Vec<_>>(),
-            vec![(&1, &2), (&3, &4)]
-        );
-        assert_eq!(
-            hash_map.iter_mut().collect::<Vec<_>>(),
-            vec![(&1, &mut 2), (&3, &mut 4)]
-        );
-        assert_eq!(
-            hash_map.clone().into_iter().collect::<Vec<_>>(),
-            vec![(1, 2), (3, 4)]
-        );
-        assert_eq!(
-            hash_map.clone().into_populated_iter().collect::<Vec<_>>(),
-            vec![(1, 2), (3, 4)]
-        );
+
+        let clone_iter_set: HashSet<_> = hash_map.clone().into_iter().collect();
+        let expected_clone_set: HashSet<_> = vec![(1, 2), (3, 4)].into_iter().collect();
+        assert_eq!(clone_iter_set, expected_clone_set);
+
+        let clone_populated_iter_set: HashSet<_> = hash_map.clone().into_populated_iter().collect();
+        let expected_populated_set: HashSet<_> = vec![(1, 2), (3, 4)].into_iter().collect();
+        assert_eq!(clone_populated_iter_set, expected_populated_set);
     }
 
     #[test]
