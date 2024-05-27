@@ -1,6 +1,6 @@
 [package]
 name = "populated"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2021"
 description = "Collection types that are guaranteed to be populated. Based on std::collections types."
 license = "Apache-2.0"

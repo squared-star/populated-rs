@@ -83,6 +83,27 @@ impl<T> From<PopulatedVec<T>> for Vec<T> {
 impl<T> TryFrom<Vec<T>> for PopulatedVec<T> {
     type Error = Vec<T>;
 
+    /// Attempts to create a `PopulatedVec` from a `Vec`. If the `Vec` is empty, it returns the original `Vec` as an error.
+    /// Otherwise, it returns a `PopulatedVec` with `Ok`.
+    /// 
+    /// ```
+    /// use populated::PopulatedVec;
+    /// 
+    /// let vec = vec![1];
+    /// let vec = PopulatedVec::try_from(vec).unwrap();
+    /// assert_eq!(vec.len().get(), 1);
+    /// assert_eq!(vec.first(), &1);
+    /// ```
+    /// 
+    /// If the `Vec` is empty, it returns the original `Vec` as an error.
+    /// 
+    /// ```
+    /// use populated::PopulatedVec;
+    /// 
+    /// let vec: Vec<u64> = vec![];
+    /// let vec = PopulatedVec::try_from(vec);
+    /// assert_eq!(vec, Err(vec![]));
+    /// ```
     fn try_from(vec: Vec<T>) -> Result<PopulatedVec<T>, Self::Error> {
         if vec.is_empty() {
             Err(vec)
@@ -98,6 +119,9 @@ impl<T> PopulatedVec<T> {
         PopulatedVec(vec![value])
     }
 
+    /// Creates a new `PopulatedVec` with the specified capacity.
+    /// The capacity must be non-zero. This creates a `PopulatedVec` with the specified capacity and the first element initialized 
+    /// with the provided value.
     pub fn with_capacity(capacity: NonZeroUsize, value: T) -> PopulatedVec<T> {
         let vec = Vec::with_capacity(capacity.get());
         PopulatedVec::pushed(vec, value)
@@ -119,6 +143,22 @@ impl<T> PopulatedVec<T> {
         PopulatedVec(vec)
     }
 
+    /// Constructs a `PopulatedVec` from a `Vec<T>` by providing the first element and the rest of the elements from an array.
+    /// 
+    /// ```
+    /// use populated::PopulatedVec;
+    /// 
+    /// let vec = PopulatedVec::from_first_and_rest_array(1, [2, 3]);
+    /// assert_eq!(vec.len().get(), 3);
+    /// assert_eq!(vec.first(), &1);
+    /// assert_eq!(vec.last(), &3);
+    /// ```
+    pub fn from_first_and_rest_array<const N: usize>(first: T, rest: [T; N]) -> PopulatedVec<T> {
+        let mut vec = PopulatedVec::with_capacity(NonZeroUsize::MIN.saturating_add(N), first);
+        vec.extend_from_array(rest);
+        vec
+    }
+
     /// Returns the underlying `Vec<T>`.
     pub fn into_inner(self) -> Vec<T> {
         self.0
@@ -127,6 +167,24 @@ impl<T> PopulatedVec<T> {
     /// Appends an element to the back of a collection.
     pub fn push(&mut self, value: T) {
         self.0.push(value);
+    }
+
+    /// Appends elements from a slice to the back of a collection.
+    /// This is a safe operation because this is a `PopulatedVec`.
+    /// 
+    /// ```
+    /// use populated::PopulatedVec;
+    /// 
+    /// let mut vec = PopulatedVec::new(1);
+    /// vec.extend_from_slice(&[2, 3]);
+    /// assert_eq!(vec.len().get(), 3);
+    /// assert_eq!(vec.last(), &3);
+    /// ```
+    pub fn extend_from_array<const N: usize>(&mut self, array: [T; N]) {
+        self.reserve(N);
+        for value in array {
+            self.push(value);
+        }
     }
 
     /// Removes the last element from the vector and returns it, along with
@@ -409,10 +467,21 @@ impl<T> PopulatedVec<T> {
     // }
 }
 impl<T: Clone> PopulatedVec<T> {
+
+    /// Resizes the vector in place so that `len` is equal to `new_len`.
+    /// If `new_len` is greater than `len`, the vector is extended by the
+    /// difference, with each additional slot filled with `value`. If `new_len`
+    /// is less than `len`, the vector is simply truncated.
     pub fn resize(&mut self, new_len: NonZeroUsize, value: T) {
         self.0.resize(new_len.get(), value);
     }
 
+    /// Resizes the vector in place so that `len` is equal to `new_len`.
+    /// If `new_len` is greater than `len`, the vector is extended by the
+    /// difference, with each additional slot filled with `value`. If `new_len`
+    /// is less than `len`, the vector is simply truncated.
+    /// 
+    /// This is a safe operation because this it returns the underlying `Vec` that can be empty.
     pub fn resize_into(self, new_len: usize, value: T) -> Vec<T> {
         let mut vec = self.0;
         vec.resize(new_len, value);
@@ -451,6 +520,7 @@ impl<T: PartialEq> PopulatedVec<T> {
 impl<T> Index<usize> for PopulatedVec<T> {
     type Output = T;
 
+    /// Performs the indexing (`container[index]`) operation.
     fn index(&self, index: usize) -> &Self::Output {
         &self.0[index]
     }
@@ -459,12 +529,16 @@ impl<T> Index<usize> for PopulatedVec<T> {
 impl<T> Index<NonZeroUsize> for PopulatedVec<T> {
     type Output = T;
 
+    /// Performs the indexing (`container[index]`) operation for a non-zero index.
     fn index(&self, index: NonZeroUsize) -> &Self::Output {
         &self.0[index.get() - 1]
     }
 }
 
+
 impl<T> IndexMut<usize> for PopulatedVec<T> {
+
+    /// Performs the mutable indexing (`container[index]`) operation.
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         &mut self.0[index]
     }
@@ -479,19 +553,75 @@ impl<T> Index<RangeFull> for PopulatedVec<T> {
 }
 
 impl<T> IndexMut<RangeFull> for PopulatedVec<T> {
+
+    /// Performs the mutable indexing (`container[..]`) operation to get a mutable reference to get a slice of the complete vector.
     fn index_mut(&mut self, _: RangeFull) -> &mut Self::Output {
         self.deref_mut()
     }
 }
 
 impl<T> PopulatedVec<T> {
+
+    /// Returns a populated iterator over the elements of the vector.
     pub fn iter(&self) -> crate::slice::PopulatedIter<'_, T> {
         self.into_populated_iter()
     }
 
+    /// Returns a mutable populated iterator over the elements of the vector.
     pub fn iter_mut(&mut self) -> slice::PopulatedIterMut<T> {
         self.into_populated_iter()
     }
+}
+
+
+/// A macro pvec! to create a PopulatedVec with a list of elements.
+/// 
+/// # Examples
+/// 
+/// ```
+/// use populated::pvec;
+/// let vec = pvec![1, 2, 3];
+/// assert_eq!(vec.len().get(), 3);
+/// assert_eq!(vec.first(), &1);
+/// assert_eq!(vec.last(), &3);
+/// ```
+/// 
+/// Works with a single element
+/// 
+/// ```
+/// use populated::pvec;
+/// let vec = pvec![1];
+/// assert_eq!(vec.len().get(), 1);
+/// assert_eq!(vec.first(), &1);
+/// assert_eq!(vec.last(), &1);
+/// ```
+///
+/// Works with trailing comma
+/// 
+/// ```
+/// use populated::pvec;
+/// let vec = pvec![1, 2, 3,];
+/// assert_eq!(vec.len().get(), 3);
+/// assert_eq!(vec.first(), &1);
+/// assert_eq!(vec.last(), &3);
+/// ```
+/// 
+/// Fails to compile if no elements are provided
+/// 
+/// ```compile_fail
+/// use populated::pvec;
+/// // This will result in a compile-time error. Test should pass if the code fails to compile.
+/// let vec = pvec![];
+/// ```
+#[macro_export]
+macro_rules! pvec {
+    () => {
+        compile_error!("PopulatedVec requires at least one element");
+    };
+    ($first: expr $(,)?) => {
+        $crate::PopulatedVec::new($first)
+    };
+    ($first:expr $(, $item:expr)+ $(,)? ) => ($crate::PopulatedVec::from_first_and_rest_array($first, [$($item),*]));
 }
 
 #[derive(PartialEq, PartialOrd, Eq, Ord, Debug)]
