@@ -1,11 +1,12 @@
 [package]
 name = "populated"
-version = "0.0.4"
+version = "0.0.5"
 edition = "2021"
 description = "Collection types that are guaranteed to be populated (i.e. non-empty). Based on std::collections types."
 license = "Apache-2.0"
 repository = "https://github.com/squared-star/populated-rs"
 keywords = ["nonempty", "non-empty", "collections", "slice"]
+categories = ["data-structures"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

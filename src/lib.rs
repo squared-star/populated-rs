@@ -143,6 +143,24 @@ impl<T> PopulatedVec<T> {
         PopulatedVec(vec)
     }
 
+    /// Constructs a `PopulatedVec` from a `Vec<T>` by inserting a single element at the specified index.
+    /// If the index is out of bounds, it will panic.
+    /// If the index is within bounds, it will insert the element at the specified index.
+    ///
+    /// ```
+    /// use populated::PopulatedVec;
+    ///
+    /// let vec = vec![1, 3];
+    /// let vec = PopulatedVec::inserted(vec, 1, 2);
+    /// assert_eq!(vec.len().get(), 3);
+    /// assert_eq!(vec.first(), &1);
+    /// assert_eq!(vec.last(), &3);
+    /// ```
+    pub fn inserted(mut vec: Vec<T>, index: usize, value: T) -> PopulatedVec<T> {
+        vec.insert(index, value);
+        PopulatedVec(vec)
+    }
+
     /// Constructs a `PopulatedVec` from a `Vec<T>` by providing the first element and the rest of the elements from an array.
     ///
     /// ```
@@ -569,6 +587,20 @@ impl<T> PopulatedVec<T> {
     }
 }
 
+impl<T> Extend<T> for PopulatedVec<T> {
+    /// Extends the vector with the contents of an iterator.
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        self.0.extend(iter);
+    }
+}
+
+impl<T, E> FromPopulatedIterator<Result<T, E>> for Result<PopulatedVec<T>, E> {
+    fn from_populated_iter(iter: impl IntoPopulatedIterator<Item = Result<T, E>>) -> Self {
+        let vec = Result::from_iter(iter.into_iter())?;
+        Ok(PopulatedVec(vec))
+    }
+}
+
 /// A macro pvec! to create a PopulatedVec with a list of elements.
 ///
 /// # Examples
@@ -719,7 +751,8 @@ impl<T> PopulatedSlice<T> {
     /// use populated::PopulatedSlice;
     /// use std::num::NonZeroUsize;
     ///
-    /// let slice: &PopulatedSlice<u64> = TryFrom::try_from(&[1, 2, 3]).unwrap();
+    /// let slice: &[u64] = &[1, 2, 3];
+    /// let slice: &PopulatedSlice<u64> = TryFrom::try_from(slice).unwrap();
     /// assert_eq!(slice.len(), NonZeroUsize::new(3).unwrap());
     /// ```
     pub fn len(&self) -> NonZeroUsize {
@@ -1197,9 +1230,21 @@ impl<'a, T: Clone> From<&'a PopulatedSlice<T>> for Cow<'a, PopulatedSlice<T>> {
 #[derive(PartialEq, PartialOrd, Eq, Ord, Clone, Debug)]
 pub struct PopulatedVecDeque<T>(VecDeque<T>);
 
+impl<T> Extend<T> for PopulatedVecDeque<T> {
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        self.0.extend(iter);
+    }
+}
+
 impl<T> From<PopulatedVecDeque<T>> for VecDeque<T> {
     fn from(populated_vec_deque: PopulatedVecDeque<T>) -> VecDeque<T> {
         populated_vec_deque.0
+    }
+}
+
+impl<T> From<PopulatedVec<T>> for PopulatedVecDeque<T> {
+    fn from(populated_vec: PopulatedVec<T>) -> PopulatedVecDeque<T> {
+        PopulatedVecDeque(populated_vec.0.into())
     }
 }
 
@@ -1226,6 +1271,23 @@ impl<T> PopulatedVecDeque<T> {
     pub fn with_capacity(capacity: NonZeroUsize, value: T) -> PopulatedVecDeque<T> {
         let mut vec_deque = VecDeque::with_capacity(capacity.get());
         vec_deque.push_back(value);
+        PopulatedVecDeque(vec_deque)
+    }
+
+    /// Creates a populated deque with the given element inserted at the specified index.
+    ///
+    /// ```
+    /// use std::collections::VecDeque;
+    /// use std::num::NonZeroUsize;
+    /// use populated::PopulatedVecDeque;
+    ///
+    /// let vec_deque = vec![1].into();
+    /// let vec_deque = PopulatedVecDeque::inserted(vec_deque, 0, 2);
+    /// assert_eq!(vec_deque.get(0), Some(&2));
+    /// assert_eq!(vec_deque.get(1), Some(&1));
+    /// ```
+    pub fn inserted(mut vec_deque: VecDeque<T>, index: usize, value: T) -> PopulatedVecDeque<T> {
+        vec_deque.insert(index, value);
         PopulatedVecDeque(vec_deque)
     }
 
@@ -1376,16 +1438,20 @@ impl<T> PopulatedVecDeque<T> {
         self.0.truncate(len.get());
     }
 
+    /// Truncates the deque to the given length.
     pub fn truncate_into(self, len: usize) -> VecDeque<T> {
         let mut vec = self.0;
         vec.truncate(len);
         vec
     }
 
+    /// Returns an iterator that yields references to the values.
     pub fn range(&self, range: impl RangeBounds<usize>) -> std::collections::vec_deque::Iter<T> {
         self.0.range(range)
     }
 
+    /// Returns an iterator that allows modifying each value.
+    /// The iterator yields mutable references to the values.
     pub fn range_mut(
         &mut self,
         range: impl RangeBounds<usize>,
@@ -1393,6 +1459,8 @@ impl<T> PopulatedVecDeque<T> {
         self.0.range_mut(range)
     }
 
+    /// Clears the deque, removing all values.
+    /// Returns the cleared deque that is not populated.
     pub fn clear(self) -> VecDeque<T> {
         let mut vec_deque = self.0;
         vec_deque.clear();
@@ -1816,6 +1884,14 @@ pub trait PopulatedIterator: IntoIterator // to enable using in for loops
     {
         self.into_iter().min_by(compare).unwrap() // TODO: this can be done without unwrap safely because this is a PopulatedIterator
     }
+
+    fn eq<I: IntoIterator>(self, other: I) -> bool
+    where
+        Self::Item: PartialEq<I::Item>,
+        Self: Sized,
+    {
+        self.into_iter().eq(other)
+    }
 }
 
 pub mod iter {
@@ -2004,6 +2080,17 @@ impl<I: PopulatedIterator> IntoPopulatedIterator for I {
     }
 }
 
+pub trait PotentiallyUnpopulated {}
+
+impl<T> PotentiallyUnpopulated for std::collections::VecDeque<T> {}
+impl<T> PotentiallyUnpopulated for Vec<T> {}
+impl<T> PotentiallyUnpopulated for std::collections::LinkedList<T> {}
+impl<T> PotentiallyUnpopulated for std::collections::BinaryHeap<T> {}
+impl<T> PotentiallyUnpopulated for std::collections::HashSet<T> {}
+impl<T> PotentiallyUnpopulated for std::collections::BTreeSet<T> {}
+impl<K, V> PotentiallyUnpopulated for std::collections::HashMap<K, V> {}
+impl<K, V> PotentiallyUnpopulated for std::collections::BTreeMap<K, V> {}
+
 /// Conversion from a `PopulatedIterator`.
 ///
 /// This trait is used to convert a `PopulatedIterator` into `Self`.
@@ -2012,7 +2099,7 @@ pub trait FromPopulatedIterator<T>: Sized {
     fn from_populated_iter(iter: impl IntoPopulatedIterator<Item = T>) -> Self;
 }
 
-impl<E, C: FromIterator<E>> FromPopulatedIterator<E> for C {
+impl<E, C: FromIterator<E> + PotentiallyUnpopulated> FromPopulatedIterator<E> for C {
     fn from_populated_iter(iter: impl IntoPopulatedIterator<Item = E>) -> C {
         iter.into_iter().collect()
     }
