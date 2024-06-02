@@ -67,7 +67,10 @@ use std::{
     collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, TryReserveError, VecDeque},
     hash::{BuildHasher, Hash, RandomState},
     num::NonZeroUsize,
-    ops::{BitOr, Deref, DerefMut, Index, IndexMut, RangeBounds, RangeFull},
+    ops::{
+        Add, AddAssign, BitOr, Deref, DerefMut, Index, IndexMut, RangeBounds, RangeFull, RangeTo,
+        RangeToInclusive,
+    },
 };
 
 /// A non-empty `Vec` with at least one element.
@@ -731,6 +734,45 @@ impl<T> IndexMut<usize> for PopulatedSlice<T> {
     /// Index into the populated slice mutably.
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         &mut self.0[index]
+    }
+}
+
+impl<T> Index<RangeFull> for PopulatedSlice<T> {
+    type Output = PopulatedSlice<T>;
+    fn index(&self, _index: RangeFull) -> &Self::Output {
+        self
+    }
+}
+
+impl<T> IndexMut<RangeFull> for PopulatedSlice<T> {
+    fn index_mut(&mut self, _index: RangeFull) -> &mut Self::Output {
+        self
+    }
+}
+
+impl<T> Index<RangeToInclusive<usize>> for PopulatedSlice<T> {
+    type Output = PopulatedSlice<T>;
+    fn index(&self, index: RangeToInclusive<usize>) -> &Self::Output {
+        TryFrom::try_from(&self.0[..=index.end]).unwrap() // unwrap is safe because the slice is populated
+    }
+}
+
+impl<T> IndexMut<RangeToInclusive<usize>> for PopulatedSlice<T> {
+    fn index_mut(&mut self, index: RangeToInclusive<usize>) -> &mut Self::Output {
+        TryFrom::try_from(&mut self.0[..=index.end]).unwrap() // unwrap is safe because the slice is populated
+    }
+}
+
+impl<T> Index<RangeTo<NonZeroUsize>> for PopulatedSlice<T> {
+    type Output = PopulatedSlice<T>;
+    fn index(&self, index: RangeTo<NonZeroUsize>) -> &Self::Output {
+        TryFrom::try_from(&self.0[..index.end.get()]).unwrap() // unwrap is safe because the slice is populated
+    }
+}
+
+impl<T> IndexMut<RangeTo<NonZeroUsize>> for PopulatedSlice<T> {
+    fn index_mut(&mut self, index: RangeTo<NonZeroUsize>) -> &mut Self::Output {
+        TryFrom::try_from(&mut self.0[..index.end.get()]).unwrap() // unwrap is safe because the slice is populated
     }
 }
 
@@ -1892,13 +1934,50 @@ pub trait PopulatedIterator: IntoIterator // to enable using in for loops
     {
         self.into_iter().eq(other)
     }
+
+    fn last(self) -> Self::Item
+    where
+        Self: Sized,
+    {
+        self.into_iter().last().unwrap() // TODO: this can be done without unwrap safely because this is a PopulatedIterator
+    }
+
+    fn rev(self) -> iter::Rev<Self>
+    where
+        Self: Sized,
+    {
+        iter::Rev { iter: self }
+    }
+
+    fn nth(self, n: usize) -> (Option<Self::Item>, Self::IntoIter)
+    where
+        Self: Sized,
+    {
+        let mut iter = self.into_iter();
+        let item = iter.nth(n);
+        (item, iter)
+    }
+
+    fn count(self) -> NonZeroUsize
+    where
+        Self: Sized,
+    {
+        NonZeroUsize::new(self.into_iter().count()).unwrap() // TODO: this can be done without unwrap safely because this is a PopulatedIterator
+    }
+}
+
+pub trait PopulatedDoubleEndedIterator: PopulatedIterator
+where
+    Self::IntoIter: DoubleEndedIterator,
+{
+    fn next_back(self) -> (Self::IntoIter, Self::Item);
 }
 
 pub mod iter {
 
     use std::num::NonZeroUsize;
 
-    use crate::{IntoPopulatedIterator, PopulatedIterator};
+    use crate::{IntoPopulatedIterator, PopulatedDoubleEndedIterator, PopulatedIterator};
 
     pub struct Map<I, F> {
         pub(crate) iter: I,
@@ -1918,6 +1997,24 @@ pub mod iter {
         fn next(mut self) -> (Self::Item, Self::IntoIter) {
             let (item, iter) = self.iter.next();
             ((self.f)(item), iter.map(self.f))
+        }
+    }
+
+    impl<I: PopulatedDoubleEndedIterator, B, F: FnMut(I::Item) -> B> PopulatedDoubleEndedIterator
+        for Map<I, F>
+    where
+        I::IntoIter: DoubleEndedIterator,
+    {
+        fn next_back(
+            mut self,
+        ) -> (
+            <Self as IntoIterator>::IntoIter,
+            <Self as IntoIterator>::Item,
+        ) {
+            let (iter, item) = self.iter.next_back();
+            let item = (self.f)(item);
+            let iter = iter.map(self.f);
+            (iter, item)
         }
     }
 
@@ -2042,6 +2139,44 @@ pub mod iter {
             (item, prefix.chain(iter))
         }
     }
+
+    pub struct Rev<I> {
+        pub(crate) iter: I,
+    }
+
+    fn switch<A, B>((a, b): (A, B)) -> (B, A) {
+        (b, a)
+    }
+
+    impl<I: PopulatedIterator> IntoIterator for Rev<I>
+    where
+        I::IntoIter: DoubleEndedIterator,
+    {
+        type Item = I::Item;
+        type IntoIter = std::iter::Rev<I::IntoIter>;
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.iter.into_iter().rev()
+        }
+    }
+
+    impl<I: PopulatedDoubleEndedIterator> PopulatedIterator for Rev<I>
+    where
+        I::IntoIter: DoubleEndedIterator,
+    {
+        fn next(self) -> (Self::Item, Self::IntoIter) {
+            switch(self.next_back())
+        }
+    }
+
+    impl<I: PopulatedDoubleEndedIterator> PopulatedDoubleEndedIterator for Rev<I>
+    where
+        I::IntoIter: DoubleEndedIterator,
+    {
+        fn next_back(self) -> (Self::IntoIter, Self::Item) {
+            switch(self.next())
+        }
+    }
 }
 
 /// Conversion into a `PopulatedIterator`.
@@ -2080,6 +2215,9 @@ impl<I: PopulatedIterator> IntoPopulatedIterator for I {
     }
 }
 
+/// A trait for types that may be unpopulated.
+/// This trait is used to mark types that may be unpopulated.
+/// This is used to allow for the conversion of a `PopulatedIterator` into a type that may be unpopulated.
 pub trait PotentiallyUnpopulated {}
 
 impl<T> PotentiallyUnpopulated for std::collections::VecDeque<T> {}
@@ -2090,6 +2228,7 @@ impl<T> PotentiallyUnpopulated for std::collections::HashSet<T> {}
 impl<T> PotentiallyUnpopulated for std::collections::BTreeSet<T> {}
 impl<K, V> PotentiallyUnpopulated for std::collections::HashMap<K, V> {}
 impl<K, V> PotentiallyUnpopulated for std::collections::BTreeMap<K, V> {}
+impl PotentiallyUnpopulated for String {}
 
 /// Conversion from a `PopulatedIterator`.
 ///
@@ -2097,6 +2236,48 @@ impl<K, V> PotentiallyUnpopulated for std::collections::BTreeMap<K, V> {}
 pub trait FromPopulatedIterator<T>: Sized {
     /// Converts a `PopulatedIterator` into `Self`.
     fn from_populated_iter(iter: impl IntoPopulatedIterator<Item = T>) -> Self;
+}
+
+impl<T> FromPopulatedIterator<T> for PopulatedVec<T> {
+    fn from_populated_iter(iter: impl IntoPopulatedIterator<Item = T>) -> Self {
+        PopulatedVec(Vec::from_populated_iter(iter))
+    }
+}
+
+impl<T> FromPopulatedIterator<T> for PopulatedVecDeque<T> {
+    fn from_populated_iter(iter: impl IntoPopulatedIterator<Item = T>) -> Self {
+        PopulatedVecDeque(VecDeque::from_populated_iter(iter))
+    }
+}
+
+impl<T: Eq + Hash> FromPopulatedIterator<T> for PopulatedHashSet<T> {
+    fn from_populated_iter(iter: impl IntoPopulatedIterator<Item = T>) -> Self {
+        PopulatedHashSet(HashSet::from_populated_iter(iter))
+    }
+}
+
+impl<T: Ord> FromPopulatedIterator<T> for PopulatedBTreeSet<T> {
+    fn from_populated_iter(iter: impl IntoPopulatedIterator<Item = T>) -> Self {
+        PopulatedBTreeSet(BTreeSet::from_populated_iter(iter))
+    }
+}
+
+impl<K: Eq + Hash, V> FromPopulatedIterator<(K, V)> for PopulatedHashMap<K, V> {
+    fn from_populated_iter(iter: impl IntoPopulatedIterator<Item = (K, V)>) -> Self {
+        PopulatedHashMap(HashMap::from_populated_iter(iter))
+    }
+}
+
+impl<K: Ord, V> FromPopulatedIterator<(K, V)> for PopulatedBTreeMap<K, V> {
+    fn from_populated_iter(iter: impl IntoPopulatedIterator<Item = (K, V)>) -> Self {
+        PopulatedBTreeMap(BTreeMap::from_populated_iter(iter))
+    }
+}
+
+impl<T: Ord> FromPopulatedIterator<T> for PopulatedBinaryHeap<T> {
+    fn from_populated_iter(iter: impl IntoPopulatedIterator<Item = T>) -> Self {
+        PopulatedBinaryHeap(BinaryHeap::from_populated_iter(iter))
+    }
 }
 
 impl<E, C: FromIterator<E> + PotentiallyUnpopulated> FromPopulatedIterator<E> for C {
@@ -4405,6 +4586,460 @@ pub mod binary_heap {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PopulatedString(String);
+
+#[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[repr(transparent)]
+pub struct PopulatedStr(str);
+
+// Write a macro for constructing a PopulatedStr from a string literal safely
+
+/// Constructs a `PopulatedStr` from a string literal safely.
+///
+/// # Example
+///
+/// ```
+/// use populated::pstr;
+/// use populated::PopulatedStr;
+/// use std::convert::TryFrom;
+///
+/// assert_eq!("Hello, world!", pstr!("Hello, world!").as_str());
+/// ```
+///
+/// ```compile_fail
+/// use populated::pstr;
+/// use populated::PopulatedStr;
+/// use std::convert::TryFrom;
+///
+/// assert_eq!("", pstr!("").as_str());
+/// ```
+///
+/// # Safety
+///
+/// This macro is safe to use because it constructs a `PopulatedStr`
+/// from a string literal in a way that is guaranteed to be safe.
+#[macro_export]
+macro_rules! pstr {
+    ($string:literal) => {{
+        const TEXT: &'static PopulatedStr = PopulatedStr::from_str_panic_if_empty($string);
+
+        TEXT
+    }};
+}
+
+impl From<PopulatedString> for String {
+    fn from(populated_string: PopulatedString) -> String {
+        populated_string.0
+    }
+}
+
+impl<'a> From<&'a PopulatedStr> for &'a str {
+    fn from(populated_str: &'a PopulatedStr) -> &'a str {
+        &populated_str.0
+    }
+}
+
+impl<'a> From<&'a mut PopulatedStr> for &'a mut str {
+    fn from(populated_str: &'a mut PopulatedStr) -> &'a mut str {
+        &mut populated_str.0
+    }
+}
+
+impl TryFrom<String> for PopulatedString {
+    type Error = String;
+
+    fn try_from(string: String) -> Result<PopulatedString, String> {
+        if string.is_empty() {
+            Err(string)
+        } else {
+            Ok(PopulatedString(string))
+        }
+    }
+}
+
+impl TryFrom<&str> for PopulatedString {
+    type Error = UnpopulatedError;
+
+    fn try_from(string: &str) -> Result<PopulatedString, UnpopulatedError> {
+        if string.is_empty() {
+            Err(UnpopulatedError)
+        } else {
+            Ok(PopulatedString(string.to_string()))
+        }
+    }
+}
+
+impl From<&PopulatedStr> for PopulatedString {
+    fn from(populated_str: &PopulatedStr) -> PopulatedString {
+        PopulatedString(populated_str.0.to_string())
+    }
+}
+
+impl<'a> TryFrom<&'a str> for &'a PopulatedStr {
+    type Error = UnpopulatedError;
+
+    fn try_from(string: &'a str) -> Result<&'a PopulatedStr, UnpopulatedError> {
+        if string.is_empty() {
+            Err(UnpopulatedError)
+        } else {
+            Ok(unsafe { &*(string as *const str as *const PopulatedStr) })
+        }
+    }
+}
+
+impl<'a> TryFrom<&'a mut str> for &'a mut PopulatedStr {
+    type Error = UnpopulatedError;
+
+    fn try_from(string: &'a mut str) -> Result<&'a mut PopulatedStr, UnpopulatedError> {
+        if string.is_empty() {
+            Err(UnpopulatedError)
+        } else {
+            Ok(unsafe { &mut *(string as *mut str as *mut PopulatedStr) })
+        }
+    }
+}
+
+impl Deref for PopulatedString {
+    type Target = PopulatedStr;
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*(self.0.as_str() as *const str as *const PopulatedStr) }
+    }
+}
+
+impl DerefMut for PopulatedString {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *(self.0.as_mut_str() as *mut str as *mut PopulatedStr) }
+    }
+}
+
+impl<'a> Extend<&'a str> for PopulatedString {
+    fn extend<T: IntoIterator<Item = &'a str>>(&mut self, iter: T) {
+        self.0.extend(iter)
+    }
+}
+
+impl<'a> Extend<&'a PopulatedStr> for PopulatedString {
+    fn extend<T: IntoIterator<Item = &'a PopulatedStr>>(&mut self, iter: T) {
+        self.0
+            .extend(iter.into_iter().map(|populated_str| &populated_str.0))
+    }
+}
+
+impl<'a> Extend<&'a PopulatedStr> for String {
+    fn extend<T: IntoIterator<Item = &'a PopulatedStr>>(&mut self, iter: T) {
+        self.extend(iter.into_iter().map(|populated_str| &populated_str.0))
+    }
+}
+
+impl PopulatedString {
+    pub fn as_str(&self) -> &PopulatedStr {
+        self.deref()
+    }
+
+    pub fn as_mut_str(&mut self) -> &mut PopulatedStr {
+        &mut *self
+    }
+    pub fn push_str(&mut self, string: &str) {
+        self.0.push_str(string);
+    }
+
+    pub fn pushed_str(mut string: String, other: &PopulatedStr) -> PopulatedString {
+        string.push_str(&other.0);
+        PopulatedString(string)
+    }
+
+    pub fn capacity(&self) -> NonZeroUsize {
+        unsafe { NonZeroUsize::new_unchecked(self.0.capacity()) }
+    }
+
+    pub fn push(&mut self, ch: char) {
+        self.0.push(ch);
+    }
+
+    pub fn pushed(mut string: String, ch: char) -> PopulatedString {
+        string.push(ch);
+        PopulatedString(string)
+    }
+
+    pub fn pop(self) -> (String, char) {
+        let mut string = self.0;
+        let ch = string.pop().unwrap();
+        (string, ch)
+    }
+
+    pub fn insert(&mut self, index: usize, ch: char) {
+        self.0.insert(index, ch);
+    }
+
+    pub fn inserted(mut string: String, index: usize, ch: char) -> PopulatedString {
+        string.insert(index, ch);
+        PopulatedString(string)
+    }
+
+    pub fn insert_str(&mut self, index: usize, string: &str) {
+        self.0.insert_str(index, string);
+    }
+
+    pub fn inserted_str(mut string: String, index: usize, other: &PopulatedStr) -> PopulatedString {
+        string.insert_str(index, &other.0);
+        PopulatedString(string)
+    }
+
+    pub fn len(&self) -> NonZeroUsize {
+        unsafe { NonZeroUsize::new_unchecked(self.0.len()) }
+    }
+
+    pub fn split_off(&mut self, at: NonZeroUsize) -> String {
+        self.0.split_off(at.get())
+    }
+
+    pub fn split_at_into(self, at: usize) -> (String, String) {
+        let mut text = self.0;
+        let other = text.split_off(at);
+        (text, other)
+    }
+
+    pub fn clear(self) -> String {
+        let mut text = self.0;
+        text.clear();
+        text
+    }
+
+    pub fn replace_range(&mut self, range: impl RangeBounds<usize>, replace_with: &PopulatedStr) {
+        self.0.replace_range(range, &replace_with.0);
+    }
+}
+
+impl PopulatedStr {
+    pub const fn from_str_panic_if_empty(str: &str) -> &PopulatedStr {
+        if str.is_empty() {
+            panic!("Attempted to create a PopulatedStr from an empty string");
+        }
+        unsafe { &*(str as *const str as *const PopulatedStr) }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Returns the length of `self`.
+    ///
+    /// This length is in bytes, not chars or graphemes. In other words, it might not be what a
+    /// human considers the length of the string.
+    pub fn len(&self) -> NonZeroUsize {
+        unsafe { NonZeroUsize::new_unchecked(self.0.len()) }
+    }
+
+    pub fn is_char_boundary(&self, index: usize) -> bool {
+        self.0.is_char_boundary(index)
+    }
+
+    pub fn split_at_populated(&self, mid: NonZeroUsize) -> (&PopulatedStr, &str) {
+        let (left, right) = self.0.split_at(mid.get());
+        (
+            unsafe { &*(left as *const str as *const PopulatedStr) },
+            right,
+        )
+    }
+
+    pub fn split_at(&self, mid: usize) -> (&str, &str) {
+        self.0.split_at(mid)
+    }
+
+    /// Returns a populated iterator over the chars of a string slice.
+    pub fn chars(&self) -> str::Chars {
+        str::Chars {
+            inner: self.0.chars(),
+        }
+    }
+
+    /// Returns the lowercase equivalent of this `PopulatedStr` slice, as a new `PopulatedString`.
+    ///
+    /// ‘Lowercase’ is defined according to the terms of the Unicode Derived Core Property
+    /// `Lowercase`.
+    ///
+    /// Since some characters can expand into multiple characters when changing the case, this
+    /// function returns a `PopulatedString` instead of modifying the parameter in-place.
+    pub fn to_lowercase(&self) -> PopulatedString {
+        PopulatedString(self.0.to_lowercase())
+    }
+
+    /// Returns the uppercase equivalent of this `PopulatedStr` slice, as a new `PopulatedString`.
+    ///
+    /// ‘Uppercase’ is defined according to the terms of the Unicode Derived Core Property
+    /// `Uppercase`.
+    ///
+    /// Since some characters can expand into multiple characters when changing the case, this
+    /// function returns a `PopulatedString` instead of modifying the parameter in-place.
+    pub fn to_uppercase(&self) -> PopulatedString {
+        PopulatedString(self.0.to_uppercase())
+    }
+
+    /// Creates a new `PopulatedString` by repeating a string n times. `n` must be greater than
+    /// 0 to preserve populatedness.
+    pub fn repeat(&self, n: NonZeroUsize) -> PopulatedString {
+        PopulatedString(self.0.repeat(n.get()))
+    }
+
+    /// Returns a string slice with leading and trailing whitespace removed.
+    ///
+    /// ‘Whitespace’ is defined according to the terms of the Unicode Derived Core Property
+    /// White_Space, which includes newlines.
+    pub fn trim(&self) -> &str {
+        self.0.trim()
+    }
+
+    /// Returns a string slice with leading whitespace removed.
+    ///
+    /// ‘Whitespace’ is defined according to the terms of the Unicode Derived Core Property
+    /// White_Space, which includes newlines.
+    pub fn trim_start(&self) -> &str {
+        self.0.trim_start()
+    }
+
+    /// Returns a string slice with trailing whitespace removed.
+    ///
+    /// ‘Whitespace’ is defined according to the terms of the Unicode Derived Core Property
+    /// White_Space, which includes newlines.
+    pub fn trim_end(&self) -> &str {
+        self.0.trim_end()
+    }
+}
+
+pub mod str {
+    use crate::{PopulatedDoubleEndedIterator, PopulatedIterator};
+
+    pub struct Chars<'a> {
+        pub(crate) inner: std::str::Chars<'a>,
+    }
+
+    impl<'a> IntoIterator for Chars<'a> {
+        type Item = char;
+        type IntoIter = std::str::Chars<'a>;
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.inner
+        }
+    }
+
+    impl<'a> PopulatedIterator for Chars<'a> {
+        fn next(self) -> (Self::Item, Self::IntoIter) {
+            let mut iter = self.inner;
+            let first = iter.next().unwrap();
+            (first, iter)
+        }
+    }
+
+    impl<'a> PopulatedDoubleEndedIterator for Chars<'a> {
+        fn next_back(self) -> (Self::IntoIter, Self::Item) {
+            let mut iter = self.inner;
+            let last = iter.next_back().unwrap();
+            (iter, last)
+        }
+    }
+}
+
+impl PartialEq<str> for PopulatedStr {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<PopulatedStr> for str {
+    fn eq(&self, other: &PopulatedStr) -> bool {
+        *self == other.0
+    }
+}
+
+impl AsRef<PopulatedStr> for PopulatedString {
+    fn as_ref(&self) -> &PopulatedStr {
+        self.as_str()
+    }
+}
+
+impl AsMut<PopulatedStr> for PopulatedString {
+    fn as_mut(&mut self) -> &mut PopulatedStr {
+        self.as_mut_str()
+    }
+}
+
+impl Borrow<PopulatedStr> for PopulatedString {
+    fn borrow(&self) -> &PopulatedStr {
+        self.as_str()
+    }
+}
+
+impl BorrowMut<PopulatedStr> for PopulatedString {
+    fn borrow_mut(&mut self) -> &mut PopulatedStr {
+        self.as_mut_str()
+    }
+}
+
+impl ToOwned for PopulatedStr {
+    type Owned = PopulatedString;
+
+    fn to_owned(&self) -> Self::Owned {
+        PopulatedString(self.0.to_owned())
+    }
+}
+
+impl AsRef<str> for PopulatedStr {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Borrow<str> for PopulatedStr {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+// methods are likely to collide with the target type, so probably not a good idea
+// to implement Deref for PopulatedStr
+// impl Deref for PopulatedStr {
+//     type Target = str;
+
+//     fn deref(&self) -> &Self::Target {
+//         &self.0
+//     }
+// }
+
+impl Add<&str> for PopulatedString {
+    type Output = PopulatedString;
+
+    fn add(self, other: &str) -> Self::Output {
+        PopulatedString(self.0 + other)
+    }
+}
+
+impl Add<&PopulatedStr> for String {
+    type Output = PopulatedString;
+
+    fn add(self, other: &PopulatedStr) -> Self::Output {
+        PopulatedString(self + &other.0)
+    }
+}
+
+impl AddAssign<&str> for PopulatedString {
+    fn add_assign(&mut self, other: &str) {
+        self.0 += other;
+    }
+}
+
+impl AddAssign<&PopulatedStr> for PopulatedString {
+    fn add_assign(&mut self, other: &PopulatedStr) {
+        self.0 += &other.0;
+    }
+}
+
+impl<'a> FromPopulatedIterator<&'a PopulatedStr> for PopulatedString {
+    fn from_populated_iter(iter: impl IntoPopulatedIterator<Item = &'a PopulatedStr>) -> Self {
+        PopulatedString(iter.into_iter().map(|ps| &ps.0).collect())
+    }
+}
+
 // Add tests for unsafe coercions involving PopulatedSlice
 
 #[cfg(test)]
@@ -4414,7 +5049,7 @@ mod tests {
 
     #[test]
     fn test_populated_vec() {
-        let mut vec = PopulatedVec(vec![1, 2, 3]);
+        let mut vec = pvec![1, 2, 3];
         assert_eq!(vec.len().get(), 3);
         assert_eq!(vec[0], 1);
         assert_eq!(vec[1], 2);
@@ -4762,5 +5397,20 @@ mod tests {
         assert_eq!(hash_set.is_superset(&HashSet::from([1, 2, 3])), true);
 
         assert_eq!(hash_set, HashSet::from([1, 2, 3]));
+    }
+
+    #[test]
+    fn test_populated_string() {
+        let string = pstr!("hello");
+        assert_eq!(string.len().get(), 5);
+        assert_eq!(string.chars().collect::<String>(), "hello");
+        assert_eq!(string.chars().rev().collect::<String>(), "olleh");
+        assert_eq!(string.chars().nth(0).0, Some('h'));
+        assert_eq!(string.chars().last(), 'o');
+        assert_eq!(string.chars().count().get(), 5);
+        assert_eq!(
+            string.chars().collect::<Vec<_>>(),
+            vec!['h', 'e', 'l', 'l', 'o']
+        );
     }
 }
